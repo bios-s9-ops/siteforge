@@ -1,0 +1,8 @@
+{
+  "name": "SiteForge",
+  "description": "Créateur de sites web assisté par Gemini, 100 % en français, avec architecture modulaire par blocs, contrôle d'originalité et export HTML/ZIP.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
