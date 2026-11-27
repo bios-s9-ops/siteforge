@@ -1,20 +1,21 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# SiteForge
 
-# Run and deploy your AI Studio app
+Créateur de sites web par blocs, avec trois façons de commencer : page vierge, inspiration d'une référence (structure et effets, images vides), ou trois propositions générées par l'IA.
 
-This contains everything you need to run your app locally.
+## Lancer
 
-View your app in AI Studio: https://ai.studio/apps/32a60c2a-8b1c-42c1-a291-f21ba449f50a
+```
+npm install --legacy-peer-deps
+npm run dev      # http://localhost:3000
+npm test         # 45 tests
+npm run build
+```
 
-## Run Locally
+Le fichier `.env` contient les clés (jamais publié : il est dans `.gitignore`). Modèle de configuration : `.env.example`.
+- `GROQ_API_KEY` : rédaction (openai/gpt-oss-120b, puis qwen/qwen3-32b). Reprise automatique sur 429 et 503.
+- `GEMINI_API_KEY` : secours, et seule option pour analyser une image ou une URL de référence.
 
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Règles du projet
+- Aucune image générée par l'IA, aucune illustration générée, aucune image de banque embarquée. Les photos viennent de l'import, d'un lien, ou de la recherche libre de droits (Openverse, Wikimedia Commons), avec auteur et licence affichés dans les crédits du site.
+- Aucun avis, chiffre, prix, nom ou coordonnée inventé : les champs factuels restent « À compléter ».
+- L'IA peut se tromper : la mention est affichée près de chaque fonction d'IA.

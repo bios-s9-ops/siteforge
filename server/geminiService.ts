@@ -1,4 +1,5 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { Type } from '@google/genai';
+import { createLLM, type LLMClient } from './llm';
 import type {
   ArtDirectionId,
   BlockType,
@@ -18,84 +19,38 @@ import {
   BANNED_FONTS,
   pickArtDirectionFromMood,
 } from '../src/utils/artDirections';
-import { BLOCK_CATALOG, createBlockId, STUDIO_MEDIA_LIBRARY } from '../src/utils/blockCatalog';
+import { BLOCK_CATALOG, createBlockId, createBlockInstance } from '../src/utils/blockCatalog';
 import { hasProvidedFactualData, sanitizeForbiddenCopy, TODO_MARKER } from '../src/utils/honesty';
 import { sanitizeFontName } from '../src/utils/validation';
+import {
+  clampDuration,
+  HEADER_STYLE_IDS,
+  IMAGE_3D_EFFECT_IDS,
+  IMAGE_SCROLL_EFFECT_IDS,
+  LAYOUT_MODE_IDS,
+  sanitizeHeaderStyle,
+  sanitizeImageEffect,
+  sanitizeLayoutMode,
+  sanitizeSectionAnimation,
+  SECTION_ANIMATION_IDS,
+} from '../src/utils/effectsCatalog';
+import { ensureContrast, hexToHsl, normalizeHex } from '../src/utils/colorHarmony';
+import { FONT_CATALOG, findFont } from '../src/utils/fonts';
+import { formatImageCredit } from '../src/utils/credits';
+import { searchRoyaltyFreeImages } from './stockImageService';
+import { applyInspirationEffects, clearAllImages } from '../src/utils/projectIO';
+import type {
+  ImageEffectConfig,
+  SiteFonts,
+  SitePalette,
+  SiteTheme,
+} from '../src/types/site';
 
-const MODEL_NAME = 'gemini-3.5-flash-lite';
+const MODEL_NAME = process.env.GEMINI_MODEL || 'gemini-3-flash-preview';
 
-function getClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
-    const err = new Error(
-      'Aucune clé API Gemini valide n’est configurée sur le serveur. Vérifiez la variable GEMINI_API_KEY.',
-    );
-    (err as Error & { status?: number; code?: string }).status = 403;
-    (err as Error & { status?: number; code?: string }).code = 'API_KEY_MISSING';
-    throw err;
-  }
-  const client = new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      apiVersion: 'v1beta',
-    },
-  });
-  const origGenerate = client.models.generateContent.bind(client.models);
-  const groqKey = process.env.GROQ_API_KEY;
-  const groqModels = ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
-
-  client.models.generateContent = (async (params: Parameters<typeof origGenerate>[0]) => {
-    const isImageInput = typeof params.contents === 'object' && params.contents !== null && 'parts' in params.contents;
-    if (groqKey && !isImageInput) {
-      const userPrompt = typeof params.contents === 'string' ? params.contents : JSON.stringify(params.contents);
-      const sysBase = typeof params.config?.systemInstruction === 'string' ? params.config.systemInstruction : '';
-      const schemaHint = params.config?.responseSchema
-        ? '\n\nRéponds uniquement en JSON valide respectant strictement ce schéma :\n' + JSON.stringify(params.config.responseSchema)
-        : '';
-      for (const gModel of groqModels) {
-        const t0 = Date.now();
-        try {
-          console.log(`[Groq] Tentative avec : ${gModel}`);
-          const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${groqKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model: gModel,
-              messages: [
-                { role: 'system', content: sysBase + schemaHint },
-                { role: 'user', content: userPrompt },
-              ],
-              temperature: 0.4,
-              ...(params.config?.responseMimeType === 'application/json'
-                ? { response_format: { type: 'json_object' } }
-                : {}),
-            }),
-          });
-          if (!resp.ok) {
-            const errTxt = await resp.text();
-            console.warn(`[Groq] Échec ${gModel} (${resp.status}): ${errTxt.slice(0, 140)}`);
-            continue;
-          }
-          const data = await resp.json();
-          let text = data?.choices?.[0]?.message?.content ?? '{}';
-          text = text.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
-          console.log(`[Groq] Succès avec ${gModel} en ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-          return { text } as Awaited<ReturnType<typeof origGenerate>>;
-        } catch (err) {
-          console.warn(`[Groq] Erreur réseau sur ${gModel}:`, err);
-        }
-      }
-    }
-    return await origGenerate({
-      ...params,
-      model: 'gemini-3-flash-preview',
-      config: { ...(params.config ?? {}), thinkingConfig: { thinkingBudget: 0 } },
-    });
-  }) as typeof origGenerate;
-  return client;
+/** Groq en premier, Gemini en secours (voir server/llm.ts). Les clés manquantes sont signalées à l'appel. */
+function getClient(): LLMClient {
+  return createLLM();
 }
 
 export function mapGeminiError(err: unknown): {
@@ -104,47 +59,56 @@ export function mapGeminiError(err: unknown): {
   code: string;
   canFallbackToCapture?: boolean;
 } {
-  console.error('DETAIL_ERREUR:', err); const raw = err instanceof Error ? err.message : String(err);
+  const raw = err instanceof Error ? err.message : String(err);
   const status = (err as { status?: number })?.status;
+  const code = (err as { code?: string })?.code;
 
+  if (code === 'URL_UNREACHABLE') {
+    return { status: 422, code: 'URL_UNREACHABLE', canFallbackToCapture: true, message: raw };
+  }
   if (
+    code === 'API_KEY_MISSING' ||
+    code === 'API_KEY_INVALID' ||
     status === 403 ||
-    raw.includes('PERMISSION_DENIED') ||
-    raw.includes('API_KEY_INVALID') ||
-    raw.includes('API_KEY_MISSING')
+    /PERMISSION_DENIED|API_KEY_INVALID|API_KEY_MISSING/.test(raw)
   ) {
     return {
       status: 403,
       code: 'API_KEY_INVALID',
-      message: 'Clé API Gemini invalide ou manquante dans les paramètres de l’environnement (Settings > Secrets).',
+      message:
+        'Clé API manquante ou refusée. Vérifiez GROQ_API_KEY (et GEMINI_API_KEY pour l’analyse d’images et d’URL) dans le fichier .env, puis relancez le serveur.',
     };
   }
-  if (status === 429 || raw.includes('RESOURCE_EXHAUSTED') || raw.includes('429')) {
+  if (code === 'QUOTA_EXCEEDED' || status === 429 || /RESOURCE_EXHAUSTED|\b429\b/.test(raw)) {
     return {
       status: 429,
       code: 'QUOTA_EXCEEDED',
-      message: 'Le quota Gemini est temporairement atteint. Patientez quelques secondes puis cliquez sur Réessayer.',
+      message: 'Le service d’IA est temporairement saturé. Patientez quelques secondes puis cliquez sur Réessayer.',
     };
   }
-  if ((err as { code?: string })?.code === 'URL_UNREACHABLE') {
+  if (code === 'STOCK_UNAVAILABLE') {
+    return { status: 503, code, message: raw };
+  }
+  if (code === 'INVALID_JSON' || code === 'EMPTY_RESPONSE') {
     return {
-      status: 422,
-      code: 'URL_UNREACHABLE',
-      canFallbackToCapture: true,
-      message: raw,
+      status: 502,
+      code: 'INVALID_RESPONSE',
+      message: 'L’IA a renvoyé une réponse inutilisable. Cliquez sur Réessayer.',
     };
+  }
+  if (code === 'TIMEOUT') {
+    return { status: 504, code: 'TIMEOUT', message: 'L’IA met trop de temps à répondre. Cliquez sur Réessayer.' };
+  }
+  if (code === 'NETWORK') {
+    return { status: 503, code: 'NETWORK', message: 'Le service d’IA est injoignable pour le moment. Réessayez dans un instant.' };
   }
   if (status && status >= 400 && status < 500) {
-    return {
-      status,
-      code: 'BAD_REQUEST',
-      message: raw || 'Requête invalide envoyée à Gemini.',
-    };
+    return { status, code: 'BAD_REQUEST', message: raw || 'Requête invalide.' };
   }
   return {
     status: 500,
-    code: 'GEMINI_ERROR',
-    message: raw || 'Une erreur est survenue lors de l’appel à Gemini. Vous pouvez réessayer.',
+    code: 'AI_ERROR',
+    message: raw || 'Une erreur est survenue lors de l’appel à l’IA. Vous pouvez réessayer.',
   };
 }
 
@@ -215,12 +179,8 @@ function defaultMediaForBlock(
       return { image: chosen.dataUrl, imageAlt: chosen.name.replace(/\.[^.]+$/, '') };
     }
   }
-  if (type === 'hero') return { image: STUDIO_MEDIA_LIBRARY[0].url, imageAlt: STUDIO_MEDIA_LIBRARY[0].alt };
-  if (type === 'about') return { image: STUDIO_MEDIA_LIBRARY[2].url, imageAlt: STUDIO_MEDIA_LIBRARY[2].alt };
-  if (type === 'team') return { image: STUDIO_MEDIA_LIBRARY[3].url, imageAlt: STUDIO_MEDIA_LIBRARY[3].alt };
-  if (type === 'products') return { image: STUDIO_MEDIA_LIBRARY[1].url, imageAlt: STUDIO_MEDIA_LIBRARY[1].alt };
-  const item = STUDIO_MEDIA_LIBRARY[index % STUDIO_MEDIA_LIBRARY.length];
-  return { image: item.url, imageAlt: item.alt };
+  // Aucune image par défaut : l'emplacement reste vide jusqu'à ce que l'utilisateur ajoute une photo.
+  return { image: '', imageAlt: '' };
 }
 
 const STRUCTURE_ANALYSIS_SCHEMA = {
@@ -229,6 +189,8 @@ const STRUCTURE_ANALYSIS_SCHEMA = {
     pageGoal: { type: Type.STRING, description: 'Objectif structurel général de la page.' },
     layoutRhythm: { type: Type.STRING, description: 'Rythme des espacements et alternance visuelle.' },
     visualHierarchy: { type: Type.STRING, description: 'Hiérarchie des titres, blocs et appels à l’action.' },
+    layoutMode: { type: Type.STRING, description: `Architecture repérée : ${LAYOUT_MODE_IDS.join(', ')}` },
+    headerStyle: { type: Type.STRING, description: `Navigation repérée : ${HEADER_STYLE_IDS.join(', ')}` },
     sections: {
       type: Type.ARRAY,
       items: {
@@ -244,6 +206,9 @@ const STRUCTURE_ANALYSIS_SCHEMA = {
           purpose: { type: Type.STRING, description: 'Rôle structurel de cette section dans le parcours.' },
           columnCount: { type: Type.INTEGER, description: 'Nombre de colonnes principales (1 à 4).' },
           spacingNote: { type: Type.STRING, description: 'Densité et respiration visuelle.' },
+          animation: { type: Type.STRING, description: `Animation d’entrée repérée : ${SECTION_ANIMATION_IDS.join(', ')}` },
+          imageScroll: { type: Type.STRING, description: `Effet d’image au défilement repéré : ${IMAGE_SCROLL_EFFECT_IDS.join(', ')}` },
+          image3d: { type: Type.STRING, description: `Effet 3D d’image repéré : ${IMAGE_3D_EFFECT_IDS.join(', ')}` },
         },
         required: ['blockType', 'variantHint', 'layoutStyle', 'purpose', 'columnCount', 'spacingNote'],
       },
@@ -444,8 +409,20 @@ const ORIGINALITY_CHECK_SCHEMA = {
   required: ['status', 'summary', 'adjustments', 'replacements'],
 };
 
+type RawBlock = {
+  type: string;
+  variant: string;
+  content: Record<string, unknown>;
+  animation?: string;
+  animationDurationMs?: number;
+  imageSlots?: unknown;
+};
+
+/** Emplacements d'images demandés par l'IA, rattachés au bloc le temps de la génération. */
+type BlockWithSlots = SiteBlock & { __slots?: unknown };
+
 function enforceHonestyOnBlocks(
-  rawBlocks: Array<{ type: string; variant: string; content: Record<string, unknown> }>,
+  rawBlocks: RawBlock[],
   siteName: string,
   realFacts?: RealFactsInput,
 ): SiteBlock[] {
@@ -524,6 +501,9 @@ function enforceHonestyOnBlocks(
       type,
       variant: validVariant,
       visible: true,
+      animation: type === 'navbar' ? 'none' : sanitizeSectionAnimation(b.animation),
+      animationDurationMs: clampDuration(b.animationDurationMs),
+      ...(b.imageSlots ? { __slots: b.imageSlots } : {}),
       content: {
         ...defaults,
         brandName:
@@ -751,7 +731,366 @@ Si besoin, fournis des textes de remplacement concrets et sobrement rédigés da
     updatedAt: now,
   };
 
+  if (projectInput.mode === 'inspiration') {
+    // Mode inspiration : structure, rythme et effets repris de la référence, jamais ses images ni les vôtres :
+    // chaque emplacement d'image reste vide, prêt à recevoir une photo.
+    return { project: clearAllImages(applyInspirationEffects(project, structureAnalysis)), originalityReport };
+  }
+
   return { project, originalityReport };
+}
+
+
+// --- Mode « Générer avec l'IA » : trois propositions différentes ---------------------------------------
+
+const PROPOSAL_BLOCK_SCHEMA = {
+  ...GENERATED_SITE_SCHEMA.properties.blocks.items,
+  properties: {
+    ...GENERATED_SITE_SCHEMA.properties.blocks.items.properties,
+    animation: { type: Type.STRING, description: SECTION_ANIMATION_IDS.join(', ') },
+    animationDurationMs: { type: Type.NUMBER },
+    imageSlots: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          target: { type: Type.STRING, description: 'content (image du bloc) ou item (image d’un élément)' },
+          itemIndex: { type: Type.NUMBER },
+          query: { type: Type.STRING, description: 'Mots-clés concrets de recherche de photo libre de droits, 2 à 5 mots.' },
+          alt: { type: Type.STRING },
+          scroll: { type: Type.STRING, description: IMAGE_SCROLL_EFFECT_IDS.join(', ') },
+          scrollIntensity: { type: Type.NUMBER },
+          effect3d: { type: Type.STRING, description: IMAGE_3D_EFFECT_IDS.join(', ') },
+          effect3dIntensity: { type: Type.NUMBER },
+        },
+        required: ['target', 'query'],
+      },
+    },
+  },
+};
+
+const PROPOSALS_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    proposals: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          name: { type: Type.STRING, description: 'Nom court de la proposition (3 à 5 mots).' },
+          concept: { type: Type.STRING, description: 'Une phrase qui résume l’idée visuelle.' },
+          siteName: { type: Type.STRING },
+          seoTitle: { type: Type.STRING },
+          seoDescription: { type: Type.STRING },
+          layoutMode: { type: Type.STRING, description: LAYOUT_MODE_IDS.join(', ') },
+          headerStyle: { type: Type.STRING, description: HEADER_STYLE_IDS.join(', ') },
+          visitorThemeToggle: { type: Type.BOOLEAN },
+          palette: {
+            type: Type.OBJECT,
+            properties: {
+              primary: { type: Type.STRING },
+              secondary: { type: Type.STRING },
+              background: { type: Type.STRING },
+              surface: { type: Type.STRING },
+              text: { type: Type.STRING },
+              mutedText: { type: Type.STRING },
+            },
+            required: ['primary', 'secondary', 'background', 'surface', 'text', 'mutedText'],
+          },
+          fonts: {
+            type: Type.OBJECT,
+            properties: { heading: { type: Type.STRING }, body: { type: Type.STRING } },
+            required: ['heading', 'body'],
+          },
+          blocks: { type: Type.ARRAY, items: PROPOSAL_BLOCK_SCHEMA },
+        },
+        required: ['name', 'concept', 'layoutMode', 'headerStyle', 'palette', 'fonts', 'blocks'],
+      },
+    },
+  },
+  required: ['proposals'],
+};
+
+const LAYOUT_FALLBACK_ORDER = ['vertical', 'split-screen', 'bento-grid', 'scroll-story', 'horizontal-slides'] as const;
+const HEADER_FALLBACK_ORDER = ['classic-bar', 'floating-glass', 'minimal-centered', 'vertical-sidebar'] as const;
+
+/** Violet, rose et cyan fluo : la teinte typique des sites « faits par une IA », refusée comme couleur de marque. */
+export function isClicheNeonColor(hex: string): boolean {
+  const { h, s, l } = hexToHsl(hex);
+  const vivid = s > 55 && l > 38 && l < 78;
+  const purplePink = h >= 265 && h <= 335;
+  const neonCyan = h >= 170 && h <= 200 && s > 75;
+  return vivid && (purplePink || neonCyan);
+}
+
+export function sanitizeProposalPalette(raw: unknown, fallback: SitePalette): SitePalette {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const pick = (key: Exclude<keyof SitePalette, 'name'>): string => normalizeHex(String(r[key] ?? '')) ?? fallback[key];
+  let palette: SitePalette = {
+    primary: pick('primary'),
+    secondary: pick('secondary'),
+    background: pick('background'),
+    surface: pick('surface'),
+    text: pick('text'),
+    mutedText: pick('mutedText'),
+  };
+  if (isClicheNeonColor(palette.primary) || isClicheNeonColor(palette.secondary)) {
+    palette = { ...palette, primary: fallback.primary, secondary: fallback.secondary };
+  }
+  if (palette.surface === palette.background) palette.surface = fallback.surface;
+  palette.text = ensureContrast(palette.text, palette.background, 4.5);
+  palette.mutedText = ensureContrast(palette.mutedText, palette.background, 3.5);
+  return palette;
+}
+
+function sanitizeProposalFonts(raw: unknown, fallback: SiteFonts): SiteFonts {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const ok = (value: unknown, fb: string): string => {
+    const name = typeof value === 'string' ? sanitizeFontName(value, '') : '';
+    if (!name) return fb;
+    if ((BANNED_FONTS as readonly string[]).includes(name)) return fb;
+    return findFont(name) || (ALLOWED_SITE_FONTS as readonly string[]).includes(name) ? name : fb;
+  };
+  return { heading: ok(r.heading, fallback.heading), body: ok(r.body, fallback.body) };
+}
+
+/** Garantit des mises en page et des navigations différentes d'une proposition à l'autre. */
+export function diversifyChoices<T extends string>(chosen: T[], pool: readonly T[]): T[] {
+  const used = new Set<T>();
+  return chosen.map((value) => {
+    if (!used.has(value)) {
+      used.add(value);
+      return value;
+    }
+    const replacement = pool.find((p) => !used.has(p)) ?? value;
+    used.add(replacement);
+    return replacement;
+  });
+}
+
+async function mapWithLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next;
+      next += 1;
+      results[i] = await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+const FACTUAL_REQUESTS: Array<{ re: RegExp; type: BlockType }> = [
+  { re: /t[ée]moignage|avis (client|des clients)/i, type: 'testimonials' },
+  { re: /[ée]quipe/i, type: 'team' },
+  { re: /chiffres?|statistiques?/i, type: 'stats' },
+  { re: /partenaires?|logos?|r[ée]f[ée]rences/i, type: 'logos' },
+];
+
+interface ImageSlotRaw {
+  target?: string;
+  itemIndex?: number;
+  query?: string;
+  alt?: string;
+  scroll?: string;
+  scrollIntensity?: number;
+  effect3d?: string;
+  effect3dIntensity?: number;
+}
+
+type StockSearchFn = typeof searchRoyaltyFreeImages;
+
+/**
+ * Remplit les emplacements d'images d'une proposition avec des photos libres de droits uniquement.
+ * Sans résultat, l'emplacement reste vide (jamais d'image de substitution ni d'illustration générée),
+ * mais les effets choisis sont conservés pour la photo que l'utilisateur ajoutera.
+ */
+export async function fillImageSlots(
+  blocks: BlockWithSlots[],
+  search: StockSearchFn = searchRoyaltyFreeImages,
+  cache: Map<string, Awaited<ReturnType<StockSearchFn>> | null> = new Map(),
+): Promise<{ filled: number; empty: number }> {
+  const jobs: Array<{ block: BlockWithSlots; slot: ImageSlotRaw }> = [];
+  for (const block of blocks) {
+    const slots = Array.isArray(block.__slots) ? (block.__slots as ImageSlotRaw[]) : [];
+    for (const slot of slots.slice(0, 8)) {
+      if (slot && typeof slot.query === 'string' && slot.query.trim()) jobs.push({ block, slot });
+    }
+    delete block.__slots;
+  }
+
+  const queries = Array.from(new Set(jobs.map((j) => j.slot.query!.trim().toLowerCase())));
+  await mapWithLimit(queries, 4, async (q) => {
+    if (cache.has(q)) return;
+    try {
+      cache.set(q, await search(q, 8));
+    } catch {
+      cache.set(q, null);
+    }
+  });
+
+  const used = new Set<string>();
+  let filled = 0;
+  let empty = 0;
+  for (const { block, slot } of jobs) {
+    const results = cache.get(slot.query!.trim().toLowerCase()) ?? [];
+    const found = results.find((r) => !used.has(r.url));
+    const effect: ImageEffectConfig = sanitizeImageEffect({
+      scroll: slot.scroll,
+      scrollIntensity: slot.scrollIntensity,
+      effect3d: slot.effect3d === 'before-after-slider' ? 'none' : slot.effect3d,
+      effect3dIntensity: slot.effect3dIntensity,
+    });
+    const alt = typeof slot.alt === 'string' && slot.alt.trim() ? sanitizeForbiddenCopy(slot.alt) : found?.title ?? '';
+    const patch = found
+      ? { image: found.url, imageAlt: alt, imageCredit: formatImageCredit(found), imageEffect: effect }
+      : { image: '', imageAlt: alt, imageEffect: effect };
+    if (found) {
+      used.add(found.url);
+      filled += 1;
+    } else {
+      empty += 1;
+    }
+    if (slot.target === 'item') {
+      const item = block.content.items?.[Math.max(0, Math.floor(slot.itemIndex ?? 0))];
+      if (item) Object.assign(item, patch);
+    } else if (block.type === 'hero' || block.type === 'about') {
+      Object.assign(block.content, patch);
+    }
+  }
+  return { filled, empty };
+}
+
+export interface ProposalInput {
+  description: string;
+  vision: string;
+  mustHave: string;
+  siteName?: string;
+}
+
+export interface GeneratedProposal {
+  id: string;
+  name: string;
+  concept: string;
+  project: SiteProject;
+}
+
+/**
+ * Génère 3 propositions différentes à partir d'un brief en trois champs :
+ * description, vision (ambiance, couleurs, effets) et éléments indispensables.
+ * Les textes, la mise en page, la palette, les polices, les animations et les effets viennent de l'IA ;
+ * les photos viennent uniquement des banques libres de droits.
+ */
+export async function generateSiteProposals(
+  input: ProposalInput,
+  deps: { llm?: LLMClient; search?: StockSearchFn } = {},
+): Promise<GeneratedProposal[]> {
+  const ai = deps.llm ?? getClient();
+  const catalogGuide = BLOCK_CATALOG.map((b) => `- ${b.type} (variantes: ${b.variants.map((v) => v.id).join(', ')})`).join('\n');
+  const fontList = Array.from(new Set([...ALLOWED_SITE_FONTS, ...FONT_CATALOG.map((f) => f.name)])).join(', ');
+
+  const prompt = `Tu conçois TROIS PROPOSITIONS de site web très différentes les unes des autres, en français, pour ce brief :
+- Description du projet : ${input.description}
+- Vision (ambiance, couleurs, sensation de mise en page, effets visuels, de défilement ou 3D souhaités) : ${input.vision || 'Libre : propose trois directions contrastées.'}
+- Éléments indispensables (sections, fonctions, contenus) : ${input.mustHave || 'Aucune exigence particulière.'}
+- Nom du site : ${input.siteName || 'à inventer sobrement à partir de la description'}
+
+RÈGLES
+1. Chaque proposition a sa propre architecture (layoutMode parmi : ${LAYOUT_MODE_IDS.join(', ')}), son propre style de navigation (headerStyle parmi : ${HEADER_STYLE_IDS.join(', ')}), sa propre palette de 6 couleurs hexadécimales (jamais de violet, rose ou cyan fluo ; texte très lisible sur le fond), ses propres polices Google Fonts (parmi : ${fontList}), des animations d'entrée par section (animation parmi : ${SECTION_ANIMATION_IDS.join(', ')}) et des effets d'image (scroll parmi : ${IMAGE_SCROLL_EFFECT_IDS.join(', ')} ; effect3d parmi : ${IMAGE_3D_EFFECT_IDS.join(', ')} ; intensités de 0 à 100) choisis selon la vision demandée.
+2. Les trois propositions doivent différer par layoutMode (trois valeurs distinctes), par headerStyle, par palette, par polices et par effets.
+3. Pour chaque bloc qui porte des images (hero, about, éléments de gallery / products / team), renseigne imageSlots avec une requête de recherche de photo libre de droits : 2 à 5 mots concrets et photographiables, en français ou en anglais (par exemple « croissants dorés comptoir boulangerie »). Jamais de mot abstrait, jamais de personne identifiable, jamais de marque. target = "content" pour l'image du bloc, "item" avec itemIndex pour l'image d'un élément. N'utilise pas before-after-slider.
+4. Entre 6 et 9 blocs, navbar en premier, footer en dernier. Ne génère AUCUN bloc testimonials, stats, team ou logos : aucune donnée réelle n'est fournie.
+5. Aucun avis, chiffre, prix, nom de personne, adresse, téléphone ou e-mail inventé : écris « À compléter » pour les coordonnées et les prix.
+6. Liens (linkHref, ctaHref) uniquement vers des sections présentes (#accueil, #apropos, #services, #galerie, #produits, #tarifs, #faq, #contact).
+
+Types de blocs et variantes autorisés :
+${catalogGuide}`;
+
+  const res = await ai.models.generateContent({
+    model: MODEL_NAME,
+    contents: prompt,
+    config: {
+      systemInstruction: HONESTY_AND_STYLE_SYSTEM_PROMPT,
+      responseMimeType: 'application/json',
+      responseSchema: PROPOSALS_SCHEMA,
+      temperature: 0.9,
+    },
+  });
+
+  const parsed = JSON.parse(res.text ?? '{}') as { proposals?: Array<Record<string, unknown>> };
+  const rawProposals = Array.isArray(parsed.proposals) ? parsed.proposals.slice(0, 3) : [];
+  if (rawProposals.length === 0) {
+    throw Object.assign(new Error('L’IA n’a proposé aucune maquette exploitable.'), { code: 'INVALID_JSON' });
+  }
+
+  const layouts = diversifyChoices(rawProposals.map((p) => sanitizeLayoutMode(p.layoutMode)), LAYOUT_FALLBACK_ORDER);
+  const headers = diversifyChoices(rawProposals.map((p) => sanitizeHeaderStyle(p.headerStyle)), HEADER_FALLBACK_ORDER);
+  const mood = `${input.vision} ${input.description}`;
+  const cache = new Map<string, Awaited<ReturnType<StockSearchFn>> | null>();
+  const now = new Date().toISOString();
+
+  return Promise.all(
+    rawProposals.map(async (raw, index) => {
+      const siteName = String(raw.siteName || input.siteName || 'Mon site').slice(0, 60);
+      const baseTheme = applyArtDirectionToTheme(pickArtDirectionFromMood(mood));
+      const palette = sanitizeProposalPalette(raw.palette, baseTheme.palette);
+      const theme: SiteTheme = {
+        ...baseTheme,
+        palette,
+        fonts: sanitizeProposalFonts(raw.fonts, baseTheme.fonts),
+        mode: hexToHsl(palette.background).l < 30 ? 'dark' : 'light',
+        layoutMode: layouts[index],
+        headerStyle: headers[index],
+        visitorThemeToggle: raw.visitorThemeToggle === true,
+      };
+
+      const blocks = enforceHonestyOnBlocks(Array.isArray(raw.blocks) ? (raw.blocks as RawBlock[]) : [], siteName) as BlockWithSlots[];
+      if (blocks[0]?.type !== 'navbar') blocks.unshift(createBlockInstance('navbar', siteName) as BlockWithSlots);
+      if (blocks[blocks.length - 1]?.type !== 'footer') blocks.push(createBlockInstance('footer', siteName) as BlockWithSlots);
+
+      // Sections factuelles demandées sans données : créées vides, champs « À compléter », jamais inventées
+      for (const { re, type } of FACTUAL_REQUESTS) {
+        if (re.test(input.mustHave) && !blocks.some((b) => b.type === type)) {
+          const at = Math.max(1, blocks.findIndex((b) => b.type === 'contact' || b.type === 'cta' || b.type === 'footer'));
+          blocks.splice(at, 0, createBlockInstance(type, siteName) as BlockWithSlots);
+        }
+      }
+
+      await fillImageSlots(blocks, deps.search, cache);
+
+      const projectInput: ProjectInput = {
+        mode: 'ai',
+        description: input.description,
+        vision: input.vision,
+        mustHave: input.mustHave,
+        siteName,
+        activity: input.description.slice(0, 140),
+        mood: input.vision || 'Libre',
+        targetAudience: '',
+        goal: input.mustHave || '',
+      };
+      const project: SiteProject = {
+        id: `prj_${Math.random().toString(36).slice(2, 9)}`,
+        name: siteName,
+        seoTitle: sanitizeForbiddenCopy(String(raw.seoTitle || `${siteName}`)),
+        seoDescription: sanitizeForbiddenCopy(String(raw.seoDescription || input.description.slice(0, 150))),
+        isDemo: false,
+        theme,
+        blocks,
+        projectInput,
+        createdAt: now,
+        updatedAt: now,
+      };
+      return {
+        id: `prop_${index + 1}`,
+        name: sanitizeForbiddenCopy(String(raw.name || `Proposition ${index + 1}`)),
+        concept: sanitizeForbiddenCopy(String(raw.concept || '')),
+        project,
+      };
+    }),
+  );
 }
 
 export async function regenerateSingleBlock(input: {
@@ -999,34 +1338,4 @@ Emplacements d'images : ${JSON.stringify(imageSlots)}`,
     seoDescription: sanitizeForbiddenCopy(parsed.seoDescription || project.seoDescription),
     imageAlts: Array.isArray(parsed.imageAlts) ? parsed.imageAlts : [],
   };
-}
-
-export async function generateIllustrationSpec(input: {
-  prompt: string;
-  primaryColor: string;
-  secondaryColor: string;
-}) {
-  const ai = getClient();
-  const res = await ai.models.generateContent({
-    model: MODEL_NAME,
-    contents: `Conçois une composition graphique vectorielle minimaliste pour illustrer : "${input.prompt}". Couleurs de base du site : ${input.primaryColor} et ${input.secondaryColor}.`,
-    config: {
-      systemInstruction: 'Réponds uniquement selon le schéma JSON avec des couleurs hexadécimales harmonieuses.',
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          title: { type: Type.STRING },
-          backgroundStart: { type: Type.STRING },
-          backgroundEnd: { type: Type.STRING },
-          accentColor: { type: Type.STRING },
-          secondaryAccent: { type: Type.STRING },
-          motif: { type: Type.STRING, description: 'architecture, organic, geometric ou minimal' },
-        },
-        required: ['title', 'backgroundStart', 'backgroundEnd', 'accentColor', 'secondaryAccent', 'motif'],
-      },
-    },
-  });
-
-  return JSON.parse(res.text ?? '{}');
 }

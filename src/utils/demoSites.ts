@@ -1,6 +1,6 @@
 import type { BlockType, SiteBlock, SiteProject } from '../types/site';
 import { applyArtDirectionToTheme } from './artDirections';
-import { createBlockId, createBlockInstance, STUDIO_MEDIA_LIBRARY } from './blockCatalog';
+import { createBlockId, createBlockInstance } from './blockCatalog';
 
 const STORAGE_KEY = 'siteforge_projects_v1';
 
@@ -21,8 +21,8 @@ export function createStarterProject(preset: 'kora' | 'seve' = 'kora'): SiteProj
           ctaHref: '#produits',
           secondaryCtaLabel: 'Prendre contact',
           secondaryCtaHref: '#contact',
-          image: STUDIO_MEDIA_LIBRARY[1].url,
-          imageAlt: STUDIO_MEDIA_LIBRARY[1].alt,
+          image: '',
+          imageAlt: '',
         },
       },
       {
@@ -37,8 +37,8 @@ export function createStarterProject(preset: 'kora' | 'seve' = 'kora'): SiteProj
               title: 'Vase Soliflore en Grès',
               price: 'À compléter',
               description: 'Tourné à la main et émaillé dans des tons minéraux naturels.',
-              image: STUDIO_MEDIA_LIBRARY[1].url,
-              imageAlt: STUDIO_MEDIA_LIBRARY[1].alt,
+              image: '',
+              imageAlt: '',
               linkLabel: 'Demander la disponibilité',
               linkHref: '#contact',
             },
@@ -47,8 +47,8 @@ export function createStarterProject(preset: 'kora' | 'seve' = 'kora'): SiteProj
               title: 'Tasse Atelier Brut',
               price: 'À compléter',
               description: 'Terre chamottée avec prise en main équilibrée pour le service quotidien.',
-              image: STUDIO_MEDIA_LIBRARY[1].url,
-              imageAlt: STUDIO_MEDIA_LIBRARY[1].alt,
+              image: '',
+              imageAlt: '',
               linkLabel: 'Demander la disponibilité',
               linkHref: '#contact',
             },
@@ -96,8 +96,8 @@ export function createStarterProject(preset: 'kora' | 'seve' = 'kora'): SiteProj
         ctaHref: '#services',
         secondaryCtaLabel: 'Prendre rendez-vous',
         secondaryCtaHref: '#contact',
-        image: STUDIO_MEDIA_LIBRARY[0].url,
-        imageAlt: STUDIO_MEDIA_LIBRARY[0].alt,
+        image: '',
+        imageAlt: '',
       },
     },
     createBlockInstance('services', 'Atelier Kora', 'numbered-list'),

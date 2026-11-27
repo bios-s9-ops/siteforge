@@ -9,6 +9,7 @@ import {
 } from '../utils/exporter';
 import { collectIncompleteFields } from '../utils/honesty';
 import { collectPublishIssues } from '../utils/publish';
+import { AiNotice } from './AiNotice';
 import { getSiteSettings, normalizeSiteUrl } from '../utils/siteSettings';
 
 interface ExportModalProps {
@@ -202,6 +203,8 @@ export function ExportModal({ isOpen, project, onClose, onOpenPublishSettings, o
                 </ul>
               </div>
             )}
+
+            <AiNotice />
 
             {needsConfirmation && (
               <label className="flex items-center gap-2.5 text-xs font-semibold text-[#1C1917] cursor-pointer select-none bg-[#FFFFFF] border border-[#E5DEC9] px-3 py-2 rounded-sm">

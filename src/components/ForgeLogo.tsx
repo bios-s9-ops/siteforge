@@ -1,49 +1,46 @@
-import React from 'react';
+interface ForgeLogoProps {
+  size?: number;
+  /** Couleur des braises */
+  ember?: string;
+  className?: string;
+  /** Texte alternatif ; vide = décoratif */
+  title?: string;
+}
 
-export function ForgeLogo({ size = 34, showText = true }: { size?: number; showText?: boolean }) {
+/**
+ * Emblème de SiteForge : enclume de forgeron, lame d'épée forgée, marteau et braises.
+ * Formes géométriques pleines, une seule couleur (currentColor) plus l'accent des braises.
+ */
+export function ForgeLogo({ size = 32, ember = '#C2410C', className, title }: ForgeLogoProps) {
   return (
-    <span className="inline-flex items-center gap-2.5 select-none">
-      <svg
-        width={size}
-        height={size}
-        viewBox="0 0 48 48"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        aria-label="Logo SiteForge"
-      >
-        <defs>
-          <linearGradient id="forgeEmber" x1="8" y1="6" x2="40" y2="42" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stopColor="#F97316" />
-            <stop offset="55%" stopColor="#DC2626" />
-            <stop offset="100%" stopColor="#7C2D12" />
-          </linearGradient>
-          <linearGradient id="steelBlade" x1="14" y1="8" x2="36" y2="26" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stopColor="#F8FAFC" />
-            <stop offset="50%" stopColor="#CBD5E1" />
-            <stop offset="100%" stopColor="#F59E0B" />
-          </linearGradient>
-        </defs>
-        <rect x="2" y="2" width="44" height="44" rx="11" fill="#18181B" stroke="#3F3F46" strokeWidth="1.5" />
-        {/* Étincelles de forge */}
-        <circle cx="15" cy="11" r="1.6" fill="#FBBF24" />
-        <circle cx="35" cy="10" r="1.4" fill="#FB923C" />
-        <circle cx="38" cy="17" r="1.2" fill="#FDE047" />
-        {/* Lame d'épée en cours de forge sur l'enclume */}
-        <path d="M13 24L33 12L37 14L16 26.5L13 24Z" fill="url(#steelBlade)" />
-        <path d="M11 23L15.5 27.5" stroke="#D97706" strokeWidth="2.4" strokeLinecap="round" />
-        <path d="M8.5 28L12.5 25.5" stroke="#92400E" strokeWidth="2.5" strokeLinecap="round" />
-        {/* Enclume de forgeron */}
-        <path
-          d="M11 28H35C38.5 28 41 29.8 41 31.5C41 32.8 38.5 34 35 34H32L34 40H15L17 34H13L9 31.5C9 29.5 9.8 28 11 28Z"
-          fill="url(#forgeEmber)"
-        />
-        <rect x="13" y="39" width="23" height="3" rx="1.5" fill="#52525B" />
-      </svg>
-      {showText && (
-        <span className="font-bold tracking-tight text-lg">
-          Site<span className="text-orange-500">Forge</span>
-        </span>
-      )}
-    </span>
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 64 64"
+      width={size}
+      height={size}
+      className={className}
+      role={title ? 'img' : undefined}
+      aria-label={title || undefined}
+      aria-hidden={title ? undefined : true}
+      focusable="false"
+    >
+      <g fill="currentColor">
+        <path d="M5 40.5 L14 38.5 H52 V44.5 H45 L41 49 V53 H47 V58 H17 V53 H23 V49 L19 44.5 H13 Z" />
+        <path d="M32 3 L35.6 9 V29.5 H28.4 V9 Z" />
+        <rect x="22.5" y="29.5" width="19" height="3.4" rx="0.6" />
+        <rect x="30.4" y="32.9" width="3.2" height="5.6" />
+        <g transform="rotate(26 51 16)">
+          <rect x="43" y="7" width="15" height="8.4" rx="1" />
+          <rect x="49.3" y="15.4" width="3.4" height="17" />
+        </g>
+      </g>
+      <rect x="31.5" y="11.5" width="1" height="16.5" style={{ fill: 'var(--forge-blade-line, #FBF8F3)' }} />
+      <g fill={ember}>
+        <rect x="37.6" y="19.2" width="2.8" height="2.8" transform="rotate(45 39 20.6)" />
+        <rect x="41.8" y="26" width="2.2" height="2.2" transform="rotate(45 42.9 27.1)" />
+        <rect x="22.4" y="21.6" width="2.2" height="2.2" transform="rotate(45 23.5 22.7)" />
+        <rect x="19" y="14.4" width="1.8" height="1.8" transform="rotate(45 19.9 15.3)" />
+      </g>
+    </svg>
   );
 }

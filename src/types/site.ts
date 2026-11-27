@@ -33,6 +33,59 @@ export type ArtDirectionId =
 export type ThemeButtonStyle = 'sharp' | 'editorial' | 'soft' | 'offset-brutal' | 'pill-clean';
 export type ThemeBorderStyle = 'hairline' | 'subtle' | 'strong' | 'double-rule';
 
+/** Architecture de la page : sens de lecture et organisation des sections. */
+export type SiteLayoutMode = 'vertical' | 'horizontal-slides' | 'bento-grid' | 'split-screen' | 'scroll-story';
+
+/** Style de la navigation en tête de page (ou latérale). */
+export type HeaderNavStyle = 'classic-bar' | 'floating-glass' | 'vertical-sidebar' | 'minimal-centered' | 'hidden';
+
+/** Effet d'une image lié au défilement de la page. */
+export type ImageScrollEffect =
+  | 'none'
+  | 'parallax-slow'
+  | 'parallax-fast'
+  | 'scroll-zoom-in'
+  | 'scroll-zoom-out'
+  | 'scroll-reveal-curtain'
+  | 'sticky-showcase'
+  | 'horizontal-drift'
+  | 'scroll-rotate-subtle';
+
+/** Effet 3D ou interactif d'une image. */
+export type Image3DEffect =
+  | 'none'
+  | 'tilt-3d-hover'
+  | 'float-3d-shadow'
+  | 'isometric-card'
+  | 'device-frame-3d'
+  | 'glass-refraction'
+  | 'spotlight-glow'
+  | 'before-after-slider'
+  | 'magnifier-loupe'
+  | 'ken-burns-loop';
+
+/** Animation d'entrée d'une section quand elle apparaît à l'écran. */
+export type SectionAnimationType =
+  | 'none'
+  | 'fade-in'
+  | 'fade-up'
+  | 'fade-down'
+  | 'slide-left'
+  | 'slide-right'
+  | 'zoom-in'
+  | 'zoom-out'
+  | 'flip-up'
+  | 'stagger-children';
+
+export interface ImageEffectConfig {
+  scroll: ImageScrollEffect;
+  /** 0 à 100 */
+  scrollIntensity: number;
+  effect3d: Image3DEffect;
+  /** 0 à 100 */
+  effect3dIntensity: number;
+}
+
 export interface SitePalette {
   name?: string;
   primary: string;
@@ -58,6 +111,10 @@ export interface SiteTheme {
   spacing: SiteSpacing;
   buttonStyle?: ThemeButtonStyle;
   borderStyle?: ThemeBorderStyle;
+  layoutMode?: SiteLayoutMode;
+  headerStyle?: HeaderNavStyle;
+  /** Affiche un bouton clair / sombre pour le visiteur, dans l'aperçu et dans le site exporté */
+  visitorThemeToggle?: boolean;
 }
 
 export interface BlockStyleOverride {
@@ -75,6 +132,9 @@ export interface BlockItem {
   badge?: string;
   image?: string;
   imageAlt?: string;
+  /** Crédit de la photo libre de droits (auteur, licence, source) */
+  imageCredit?: string;
+  imageEffect?: ImageEffectConfig;
   linkLabel?: string;
   linkHref?: string;
   meta?: string;
@@ -94,6 +154,12 @@ export interface BlockContent {
   secondaryCtaHref?: string;
   image?: string;
   imageAlt?: string;
+  imageCredit?: string;
+  imageEffect?: ImageEffectConfig;
+  /** Seconde image (comparateur avant / après) */
+  secondaryImage?: string;
+  secondaryImageAlt?: string;
+  secondaryImageCredit?: string;
   email?: string;
   phone?: string;
   address?: string;
@@ -107,6 +173,8 @@ export interface SiteBlock {
   variant: string;
   visible: boolean;
   styleOverride?: BlockStyleOverride;
+  animation?: SectionAnimationType;
+  animationDurationMs?: number;
   content: BlockContent;
 }
 
@@ -125,12 +193,19 @@ export interface StructureSectionBlueprint {
   purpose: string;
   columnCount: number;
   spacingNote: string;
+  /** Effets repérés dans la référence : animation d'entrée, effet d'image au défilement, effet 3D */
+  animation?: SectionAnimationType;
+  imageScroll?: ImageScrollEffect;
+  image3d?: Image3DEffect;
 }
 
 export interface StructureAnalysis {
   pageGoal: string;
   layoutRhythm: string;
   visualHierarchy: string;
+  /** Architecture et navigation repérées dans la référence */
+  layoutMode?: SiteLayoutMode;
+  headerStyle?: HeaderNavStyle;
   sections: StructureSectionBlueprint[];
 }
 
@@ -157,7 +232,13 @@ export interface RealFactsInput {
 }
 
 export interface ProjectInput {
-  mode: 'inspiration' | 'scratch';
+  mode: 'inspiration' | 'scratch' | 'ai';
+  /** Mode « Générer avec l'IA » : de quoi parle le site */
+  description?: string;
+  /** Mode « Générer avec l'IA » : ambiance, couleurs, sensation de mise en page, effets souhaités */
+  vision?: string;
+  /** Mode « Générer avec l'IA » : sections et contenus indispensables */
+  mustHave?: string;
   activity: string;
   siteName: string;
   mood: string;

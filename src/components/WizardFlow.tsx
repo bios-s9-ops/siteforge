@@ -1,3 +1,4 @@
+import { AiNotice } from './AiNotice';
 import { useState } from 'react';
 import {
   AlertTriangle,
@@ -904,6 +905,7 @@ export function WizardFlow({ mode, onCancel, onComplete }: WizardFlowProps) {
                 </button>
               )}
             </div>
+            <AiNotice className="mt-3" />
           </div>
         )}
       </main>

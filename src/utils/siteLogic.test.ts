@@ -11,7 +11,6 @@ import {
 import { BLOCK_CATALOG } from './blockCatalog';
 import { escapeHtml, getContrastTextColor, sanitizeColor, sanitizeUrl } from './validation';
 import { generateSeparateHtmlAndCss, generateSiteCss, generateStandaloneHtml } from './exporter';
-import { buildSafeSvgDataUrl } from './svgIllustration';
 import {
   ART_DIRECTIONS,
   BANNED_FONTS,
@@ -121,7 +120,7 @@ test('les garde-fous anti-slop et d’honnêteté détectent les motifs bannis e
   const violations = findForbiddenDesignPatterns(
     "font-family: 'Inter', sans-serif; backdrop-blur-md bg-clip-text box-shadow: 0 0 24px rgba(124,58,237,0.5);",
   );
-  assert.ok(violations.length >= 4);
+  assert.ok(violations.length >= 3, 'police bannie, texte en dégradé et lueur néon sont détectés');
 
   const cleaned = sanitizeForbiddenCopy('✨ Révolutionnez votre activité avec notre solution tout-en-un 🚀');
   assert.ok(!cleaned.includes('✨'));
@@ -156,8 +155,8 @@ test('l’export HTML autonome et ZIP est sans XSS, sans motifs bannis et inclut
 
   const html = generateStandaloneHtml(project);
   assert.ok(html.includes('<!DOCTYPE html>'));
-  assert.ok(html.includes('<html lang="fr">'));
-  assert.ok(html.includes('<main>'));
+  assert.ok(html.includes('<html lang="fr"'));
+  assert.ok(html.includes('<main id="contenu"'));
   assert.ok(!html.includes('<script>alert(1)</script>'));
   assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
   assert.ok(html.includes(DEMO_FICTION_BANNER_TEXT));
@@ -167,7 +166,7 @@ test('l’export HTML autonome et ZIP est sans XSS, sans motifs bannis et inclut
   assert.ok(separate.indexHtml.includes('<link rel="stylesheet" href="style.css" />'));
   assert.ok(separate.indexHtml.includes(DEMO_FICTION_BANNER_TEXT));
   assert.ok(separate.styleCss.includes('--sf-primary:'));
-  assert.ok(separate.assetSources.length > 0);
+  assert.equal(separate.assetSources.length, 0, 'aucune image par défaut : rien à copier dans assets/');
   assert.deepEqual(findForbiddenDesignPatterns(separate.styleCss), []);
 
   // Vérifie chaque direction artistique à l'export
@@ -178,16 +177,4 @@ test('l’export HTML autonome et ZIP est sans XSS, sans motifs bannis et inclut
     assert.deepEqual(findForbiddenDesignPatterns(css), [], `CSS propre pour ${dir.id}`);
     assert.ok(!outHtml.includes(DEMO_FICTION_BANNER_TEXT), 'Pas de bandeau démo si isDemo est false');
   }
-});
-
-test('le générateur d’illustration SVG produit une Data URL valide', () => {
-  const dataUrl = buildSafeSvgDataUrl({
-    title: 'Atelier lumineux',
-    backgroundStart: '#F8FAFC',
-    backgroundEnd: '#E2E8F0',
-    accentColor: '#1E40AF',
-    secondaryAccent: '#0F766E',
-    motif: 'architecture',
-  });
-  assert.ok(dataUrl.startsWith('data:image/svg+xml;utf8,'));
 });

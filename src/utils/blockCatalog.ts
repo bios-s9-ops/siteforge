@@ -1,37 +1,6 @@
 import type { BlockDefinition, BlockType, SiteBlock } from '../types/site';
 export { CURATED_FONT_PAIRINGS } from './artDirections';
 
-export const STUDIO_MEDIA_LIBRARY = [
-  {
-    id: 'arch-studio',
-    label: 'Atelier lumineux en chêne et pierre',
-    url: '/src/assets/images/studio_hero_architecture_1795316956684.jpg',
-    alt: 'Espace de travail architectural lumineux avec grande table en chêne et baies vitrées',
-    aspect: '16:9',
-  },
-  {
-    id: 'craft-vessels',
-    label: 'Objets artisanaux sur travertin',
-    url: '/src/assets/images/studio_craft_product_1795316957317.jpg',
-    alt: 'Céramiques artisanales et emballages épurés posés sur une table en travertin',
-    aspect: '4:3',
-  },
-  {
-    id: 'team-workshop',
-    label: 'Collaboration en atelier',
-    url: '/src/assets/images/studio_team_collaboration_1795316957597.jpg',
-    alt: 'Deux créateurs échangeant autour de plans et d’échantillons de matériaux',
-    aspect: '4:3',
-  },
-  {
-    id: 'founder-portrait',
-    label: 'Portrait éditorial en studio',
-    url: '/src/assets/images/studio_portrait_founder_1795316957021.jpg',
-    alt: 'Portrait naturel d’une directrice de création dans un atelier baigné de lumière',
-    aspect: '1:1',
-  },
-];
-
 export function createBlockId(prefix = 'blk'): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -78,8 +47,8 @@ export const BLOCK_CATALOG: BlockDefinition[] = [
       ctaHref: '#services',
       secondaryCtaLabel: 'Demander un devis',
       secondaryCtaHref: '#contact',
-      image: STUDIO_MEDIA_LIBRARY[0].url,
-      imageAlt: STUDIO_MEDIA_LIBRARY[0].alt,
+      image: '',
+      imageAlt: '',
     }),
   },
   {
@@ -98,8 +67,8 @@ export const BLOCK_CATALOG: BlockDefinition[] = [
       body: 'Nous privilégions des matériaux bruts, locaux et réparables. Chaque projet démarre par une écoute attentive de vos usages quotidiens afin de créer un lieu juste, lumineux et pérenne.',
       ctaLabel: 'Nous contacter',
       ctaHref: '#contact',
-      image: STUDIO_MEDIA_LIBRARY[2].url,
-      imageAlt: STUDIO_MEDIA_LIBRARY[2].alt,
+      image: '',
+      imageAlt: '',
     }),
   },
   {
@@ -157,22 +126,22 @@ export const BLOCK_CATALOG: BlockDefinition[] = [
           id: createBlockId('gal'),
           title: 'Projet d’aménagement intérieur',
           subtitle: 'À compléter avec le lieu et la date',
-          image: STUDIO_MEDIA_LIBRARY[0].url,
-          imageAlt: STUDIO_MEDIA_LIBRARY[0].alt,
+          image: '',
+          imageAlt: '',
         },
         {
           id: createBlockId('gal'),
           title: 'Objet ou pièce sur mesure',
           subtitle: 'À compléter avec la matière',
-          image: STUDIO_MEDIA_LIBRARY[1].url,
-          imageAlt: STUDIO_MEDIA_LIBRARY[1].alt,
+          image: '',
+          imageAlt: '',
         },
         {
           id: createBlockId('gal'),
           title: 'Espace collaboratif',
           subtitle: 'À compléter avec le contexte',
-          image: STUDIO_MEDIA_LIBRARY[2].url,
-          imageAlt: STUDIO_MEDIA_LIBRARY[2].alt,
+          image: '',
+          imageAlt: '',
         },
       ],
     }),
@@ -197,8 +166,8 @@ export const BLOCK_CATALOG: BlockDefinition[] = [
           title: 'À compléter',
           price: 'À compléter',
           description: 'Décrivez les caractéristiques exactes, dimensions ou matières de cet article.',
-          image: STUDIO_MEDIA_LIBRARY[1].url,
-          imageAlt: STUDIO_MEDIA_LIBRARY[1].alt,
+          image: '',
+          imageAlt: '',
           linkLabel: 'Demander des renseignements',
           linkHref: '#contact',
         },
@@ -207,8 +176,8 @@ export const BLOCK_CATALOG: BlockDefinition[] = [
           title: 'À compléter',
           price: 'À compléter',
           description: 'Décrivez les caractéristiques exactes de cette deuxième référence.',
-          image: STUDIO_MEDIA_LIBRARY[1].url,
-          imageAlt: STUDIO_MEDIA_LIBRARY[1].alt,
+          image: '',
+          imageAlt: '',
           linkLabel: 'Demander des renseignements',
           linkHref: '#contact',
         },
@@ -356,8 +325,8 @@ export const BLOCK_CATALOG: BlockDefinition[] = [
           title: 'À compléter',
           subtitle: 'À compléter (poste / métier)',
           description: 'À compléter avec le parcours réel de la personne (avec son accord pour sa photo).',
-          image: STUDIO_MEDIA_LIBRARY[3].url,
-          imageAlt: STUDIO_MEDIA_LIBRARY[3].alt,
+          image: '',
+          imageAlt: '',
         },
       ],
     }),

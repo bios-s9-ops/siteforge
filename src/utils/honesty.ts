@@ -260,9 +260,7 @@ export function findForbiddenDesignPatterns(cssOrHtml: string): string[] {
   if (/bg-clip-text|-webkit-background-clip:\s*text/i.test(cssOrHtml)) {
     violations.push('Texte en dégradé détecté');
   }
-  if (/backdrop-blur|backdrop-filter\s*:\s*blur/i.test(cssOrHtml)) {
-    violations.push('Effet glassmorphism (backdrop-blur) détecté');
-  }
+  // Le verre dépoli n'est plus interdit : il est proposé volontairement (navigation flottante, verre réfractant).
   if (/box-shadow\s*:[^;]*(0\s+0\s+\d{2,}px\s+(rgba|#|hsl))/i.test(cssOrHtml)) {
     violations.push('Lueur néon détectée');
   }

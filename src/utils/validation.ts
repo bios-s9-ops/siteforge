@@ -21,7 +21,7 @@ export function sanitizeUrl(rawUrl: string | undefined, fallback = '#'): string 
   const trimmed = rawUrl.trim();
   if (!trimmed) return fallback;
 
-  if (trimmed.startsWith('#') || trimmed.startsWith('/src/assets/') || trimmed.startsWith('assets/')) {
+  if (trimmed.startsWith('#') || trimmed.startsWith('assets/')) {
     return trimmed;
   }
 

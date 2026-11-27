@@ -13,6 +13,19 @@ import {
   faviconDataUri,
 } from './publish';
 import { buildWhatsappUrl, cleanEmail, getSiteSettings, parseSocialLinks, toTelHref } from './siteSettings';
+import { BENTO_SPANS, EFFECTS_CSS, EFFECTS_RUNTIME_JS } from './effectsRuntime';
+import {
+  clampDuration,
+  hasAnyImageEffect,
+  sanitizeHeaderStyle,
+  sanitizeImageEffect,
+  sanitizeLayoutMode,
+  sanitizeSectionAnimation,
+} from './effectsCatalog';
+import { deriveAlternatePalette } from './colorHarmony';
+import { collectImageCredits } from './credits';
+import { genericFallback, googleFontsHref } from './fonts';
+import type { ImageEffectConfig, SiteLayoutMode, SitePalette } from '../types/site';
 
 const RADIUS_MAP: Record<SiteRadius, string> = {
   none: '0px',
@@ -58,11 +71,53 @@ function linkHtml(
 }
 
 function buildGoogleFontsHref(heading: string, body: string): string {
-  const families = Array.from(new Set([heading, body])).map((f) => {
-    const clean = sanitizeFontName(f, 'Hanken Grotesk').replace(/\s+/g, '+');
-    return `family=${clean}:wght@400;500;600;700`;
-  });
-  return `https://fonts.googleapis.com/css2?${families.join('&')}&display=swap`;
+  return googleFontsHref([sanitizeFontName(heading, 'Fraunces'), sanitizeFontName(body, 'Hanken Grotesk')]);
+}
+
+/** Référence de couleur : variable CSS quand la couleur est un rôle de la palette (le mode sombre peut alors l'échanger). */
+function cssColorRef(value: string | undefined, palette: SitePalette, fallback: string): string {
+  const v = sanitizeColor(value ?? '', fallback).toUpperCase();
+  const roles: Array<[string, string]> = [
+    [palette.background, '--sf-bg'],
+    [palette.surface, '--sf-surface'],
+    [palette.text, '--sf-text'],
+    [palette.mutedText, '--sf-muted'],
+    [palette.primary, '--sf-primary'],
+    [palette.secondary, '--sf-secondary'],
+  ];
+  for (const [hex, name] of roles) {
+    if (sanitizeColor(hex, '#000000').toUpperCase() === v) return `var(${name})`;
+  }
+  return v;
+}
+
+interface MediaOptions {
+  src: string;
+  alt: string;
+  aspect: string;
+  extraStyle?: string;
+  effect?: ImageEffectConfig;
+  secondary?: string;
+  secondaryAlt?: string;
+  hero?: boolean;
+}
+
+/** Image simple, ou enveloppe à effets (défilement, 3D, avant / après) lue par le moteur d'effets partagé. */
+function mediaHtml(o: MediaOptions): string {
+  if (!o.src) return '';
+  const cls = `sf-media${o.hero ? ' sf-hero-media' : ''}`;
+  const alt = escapeHtml(o.alt);
+  const extra = o.extraStyle ? ` ${o.extraStyle}` : '';
+  const effect = o.effect ? sanitizeImageEffect(o.effect) : null;
+  if (!effect || !hasAnyImageEffect(effect)) {
+    return `<img class="${cls}" style="aspect-ratio: ${o.aspect};${extra}" src="${escapeHtml(o.src)}" alt="${alt}" loading="lazy" decoding="async" />`;
+  }
+  const hasAfter = effect.effect3d === 'before-after-slider' && Boolean(o.secondary);
+  const fx3d = effect.effect3d === 'before-after-slider' && !hasAfter ? 'none' : effect.effect3d;
+  const after = hasAfter
+    ? `<img class="sf-media sf-fx-after" src="${escapeHtml(o.secondary as string)}" alt="${escapeHtml(o.secondaryAlt || '')}" loading="lazy" decoding="async" />`
+    : '';
+  return `<div class="sf-fx${o.hero ? ' sf-hero-media' : ''}" data-fx-scroll="${effect.scroll}" data-fx-scroll-i="${effect.scrollIntensity}" data-fx-3d="${fx3d}" data-fx-3d-i="${effect.effect3dIntensity}" style="aspect-ratio: ${o.aspect}; --k3: ${(effect.effect3dIntensity / 100).toFixed(2)}; --ks: ${(effect.scrollIntensity / 100).toFixed(2)};${extra}"><div class="sf-fx-3d"><div class="sf-fx-inner"><img class="sf-media" src="${escapeHtml(o.src)}" alt="${alt}" loading="lazy" decoding="async" />${after}</div></div></div>`;
 }
 
 function getButtonCssVars(theme: SiteTheme): { btnRadius: string; btnShadow: string; borderWidth: string } {
@@ -80,6 +135,24 @@ function getButtonCssVars(theme: SiteTheme): { btnRadius: string; btnShadow: str
   const btnShadow = btnStyle === 'offset-brutal' ? '3px 3px 0px currentColor' : 'none';
   const borderWidth = borderStyle === 'strong' ? '1.5px' : '1px';
   return { btnRadius, btnShadow, borderWidth };
+}
+
+function alternateThemeCss(theme: SiteTheme): string {
+  if (!theme.visitorThemeToggle) return '';
+  const toDark = theme.mode !== 'dark';
+  const alt = deriveAlternatePalette(theme.palette, toDark);
+  const border = toDark ? 'rgba(255, 255, 255, 0.14)' : 'rgba(17, 17, 17, 0.14)';
+  return `:root[data-theme="${toDark ? 'dark' : 'light'}"] {
+  color-scheme: ${toDark ? 'dark' : 'light'};
+  --sf-primary: ${alt.primary};
+  --sf-on-primary: ${getContrastTextColor(alt.primary)};
+  --sf-secondary: ${alt.secondary};
+  --sf-bg: ${alt.background};
+  --sf-surface: ${alt.surface};
+  --sf-text: ${alt.text};
+  --sf-muted: ${alt.mutedText};
+  --sf-border: ${border};
+}`;
 }
 
 export function generateSiteCss(project: SiteProject): string {
@@ -113,9 +186,11 @@ export function generateSiteCss(project: SiteProject): string {
   --sf-btn-radius: ${btnRadius};
   --sf-btn-shadow: ${btnShadow};
   --sf-section-pad: ${sectionPad};
-  --sf-font-heading: '${headingFont}', Georgia, serif;
-  --sf-font-body: '${bodyFont}', system-ui, sans-serif;
+  --sf-font-heading: '${headingFont}', ${genericFallback(headingFont)};
+  --sf-font-body: '${bodyFont}', ${genericFallback(bodyFont)};
 }
+${alternateThemeCss(theme)}
+${EFFECTS_CSS}
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -614,8 +689,14 @@ function renderBlockToHtml(
   const c = block.content;
   const items = Array.isArray(c.items) ? c.items : [];
   const colors = computeBlockSurfaceColors(block, index, theme);
-  const sectionStyle = ` style="background-color: ${escapeHtml(sanitizeColor(colors.bg, theme.palette.background))}; color: ${escapeHtml(sanitizeColor(colors.text, theme.palette.text))}"`;
-  const cardBgStyle = `background-color: ${escapeHtml(sanitizeColor(colors.cardBg, theme.palette.surface))};`;
+  const bgRef = escapeHtml(cssColorRef(colors.bg, theme.palette, theme.palette.background));
+  const textRef = escapeHtml(cssColorRef(colors.text, theme.palette, theme.palette.text));
+  const animType = block.type === 'navbar' ? 'none' : sanitizeSectionAnimation(block.animation);
+  const animAttr = animType !== 'none' ? ` data-anim="${animType}"` : '';
+  const storyAttr =
+    theme.layoutMode === 'scroll-story' && block.type !== 'navbar' && block.type !== 'footer' ? ' data-story' : '';
+  const sectionStyle = `${animAttr}${storyAttr} style="--sf-anim-ms: ${clampDuration(block.animationDurationMs)}ms; background-color: ${bgRef}; color: ${textRef}"`;
+  const cardBgStyle = `background-color: ${escapeHtml(cssColorRef(colors.cardBg, theme.palette, theme.palette.surface))};`;
   const anchorId = anchors.byBlockId.get(block.id) ?? block.id;
 
   switch (block.type) {
@@ -629,8 +710,8 @@ function renderBlockToHtml(
             .join('');
       const cta = linkHtml(ctx, c.ctaLabel, c.ctaHref, 'sf-btn sf-btn-primary');
       const hasMenu = Boolean(linksHtml);
-      const navBg = escapeHtml(sanitizeColor(colors.bg, theme.palette.surface));
-      const navText = escapeHtml(sanitizeColor(colors.text, theme.palette.text));
+      const navBg = escapeHtml(cssColorRef(colors.bg, theme.palette, theme.palette.surface));
+      const navText = escapeHtml(cssColorRef(colors.text, theme.palette, theme.palette.text));
       return `<header class="sf-navbar" style="background-color: ${navBg}; color: ${navText}; --sf-nav-bg: ${navBg}">
   <div class="sf-container sf-navbar-inner">
     <a class="sf-brand" href="#top">${escapeHtml(c.brandName || 'Mon Site')}</a>
@@ -666,7 +747,7 @@ function renderBlockToHtml(
     <div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 0.75rem; margin-bottom: 2.5rem;">
       ${primaryBtn}${secondaryBtn}
     </div>
-    ${imgSrc ? `<img class="sf-media" style="aspect-ratio: 16 / 9;" src="${escapeHtml(imgSrc)}" alt="${escapeHtml(c.imageAlt || c.heading || '')}" />` : ''}
+    ${imgSrc ? `${mediaHtml({ src: imgSrc, alt: c.imageAlt || c.heading || '', aspect: '16 / 9', effect: c.imageEffect, secondary: rewriteAssetSrc(c.secondaryImage), secondaryAlt: c.secondaryImageAlt, hero: block.type === 'hero' })}` : ''}
   </div>
 </section>`;
       }
@@ -682,7 +763,7 @@ function renderBlockToHtml(
         ${primaryBtn}${secondaryBtn}
       </div>
     </div>
-    ${imgSrc ? `<img class="sf-media" style="aspect-ratio: 21 / 9;" src="${escapeHtml(imgSrc)}" alt="${escapeHtml(c.imageAlt || c.heading || '')}" />` : ''}
+    ${imgSrc ? `${mediaHtml({ src: imgSrc, alt: c.imageAlt || c.heading || '', aspect: '21 / 9', effect: c.imageEffect, secondary: rewriteAssetSrc(c.secondaryImage), secondaryAlt: c.secondaryImageAlt, hero: block.type === 'hero' })}` : ''}
   </div>
 </section>`;
       }
@@ -698,7 +779,7 @@ function renderBlockToHtml(
       </div>
     </div>
     <div>
-      ${imgSrc ? `<img class="sf-media" style="aspect-ratio: 4 / 3;" src="${escapeHtml(imgSrc)}" alt="${escapeHtml(c.imageAlt || c.heading || '')}" />` : ''}
+      ${imgSrc ? `${mediaHtml({ src: imgSrc, alt: c.imageAlt || c.heading || '', aspect: '4 / 3', effect: c.imageEffect, secondary: rewriteAssetSrc(c.secondaryImage), secondaryAlt: c.secondaryImageAlt, hero: block.type === 'hero' })}` : ''}
     </div>
   </div>
 </section>`;
@@ -713,7 +794,7 @@ function renderBlockToHtml(
       ${linkHtml(ctx, c.ctaLabel, c.ctaHref, 'sf-btn sf-btn-secondary', { style: 'margin-top: 1rem;' })}
     </div>`;
       const imgCol = imgSrc
-        ? `<div><img class="sf-media" style="aspect-ratio: 4 / 3;" src="${escapeHtml(imgSrc)}" alt="${escapeHtml(c.imageAlt || c.heading || '')}" /></div>`
+        ? `<div>${mediaHtml({ src: imgSrc, alt: c.imageAlt || c.heading || '', aspect: '4 / 3', effect: c.imageEffect, secondary: rewriteAssetSrc(c.secondaryImage), secondaryAlt: c.secondaryImageAlt, hero: false })}</div>`
         : '';
       return `<section id="${anchorId}" class="sf-section"${sectionStyle}>
   <div class="sf-container sf-grid-asym">
@@ -772,7 +853,7 @@ function renderBlockToHtml(
         .map((item) => {
           const src = rewriteAssetSrc(item.image);
           return `<figure style="margin: 0;">
-        ${src ? `<img class="sf-media" style="aspect-ratio: 4 / 3;" src="${escapeHtml(src)}" alt="${escapeHtml(item.imageAlt || item.title)}" />` : ''}
+        ${src ? `${mediaHtml({ src, alt: item.imageAlt || item.title, aspect: '4 / 3', effect: item.imageEffect })}` : ''}
         <figcaption style="margin-top: 0.75rem;">
           <strong style="display: block;">${escapeHtml(item.title)}</strong>
           ${item.subtitle ? `<span style="font-size: 0.875rem; color: var(--sf-muted);">${escapeHtml(item.subtitle)}</span>` : ''}
@@ -798,7 +879,7 @@ function renderBlockToHtml(
           const src = rewriteAssetSrc(item.image);
           return `<article class="sf-card" style="${cardBgStyle} display: flex; flex-direction: column; justify-content: space-between; gap: 1rem;">
         <div>
-          ${src ? `<img class="sf-media" style="aspect-ratio: 4 / 3; margin-bottom: 1rem;" src="${escapeHtml(src)}" alt="${escapeHtml(item.imageAlt || item.title)}" />` : ''}
+          ${src ? `${mediaHtml({ src, alt: item.imageAlt || item.title, aspect: '4 / 3', extraStyle: 'margin-bottom: 1rem;', effect: item.imageEffect })}` : ''}
           <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: baseline;">
             <h3 style="font-size: 1.15rem; margin: 0;">${escapeHtml(item.title)}</h3>
             ${item.price ? `<strong style="font-variant-numeric: tabular-nums;">${escapeHtml(item.price)}</strong>` : ''}
@@ -924,7 +1005,7 @@ function renderBlockToHtml(
         .map((item) => {
           const src = rewriteAssetSrc(item.image);
           return `<article class="sf-card" style="${cardBgStyle}">
-        ${src ? `<img class="sf-media" style="aspect-ratio: 1 / 1; margin-bottom: 1rem;" src="${escapeHtml(src)}" alt="${escapeHtml(item.imageAlt || item.title)}" />` : ''}
+        ${src ? `${mediaHtml({ src, alt: item.imageAlt || item.title, aspect: '1 / 1', extraStyle: 'margin-bottom: 1rem;', effect: item.imageEffect })}` : ''}
         <h3 style="font-size: 1.15rem; margin-bottom: 0.2rem;">${escapeHtml(item.title)}</h3>
         ${item.subtitle ? `<div style="font-size: 0.875rem; color: var(--sf-primary); font-weight: 600; margin-bottom: 0.5rem;">${escapeHtml(item.subtitle)}</div>` : ''}
         <p style="color: var(--sf-muted); margin: 0;">${escapeHtml(item.description)}</p>
@@ -1080,11 +1161,87 @@ export interface PageOptions {
 
 function buildInlineScripts(options: PageOptions): string {
   const dry = options.dryRun ? 'window.__SF_DRY_RUN__ = true;\n' : '';
-  return `<script>\n${dry}${PAGE_SCRIPT}\n${FORM_RUNTIME_SCRIPT}\n</script>`;
+  return `<script>\n${dry}${EFFECTS_RUNTIME_JS}\nwindow.__sfFx(document, {});\n${PAGE_SCRIPT}\n${FORM_RUNTIME_SCRIPT}\n</script>`;
 }
 
-function renderBody(project: SiteProject, anchors: AnchorMap, rewriteAssetSrc: (src?: string) => string): string {
-  return project.blocks.map((b, i) => renderBlockToHtml(b, i, project, anchors, rewriteAssetSrc)).join('\n');
+export interface RenderedBody {
+  header: string;
+  main: string;
+  footer: string;
+  layout: SiteLayoutMode;
+}
+
+/**
+ * Assemble les sections selon l'architecture choisie :
+ * vertical, diapositives horizontales, grille bento, écran partagé ou récit au défilement.
+ * La navigation et le pied de page restent hors de la zone principale (sauf diapositives : le pied devient la dernière).
+ */
+function renderBody(
+  project: SiteProject,
+  anchors: AnchorMap,
+  rewriteAssetSrc: (src?: string) => string,
+): RenderedBody {
+  const layout = sanitizeLayoutMode(project.theme.layoutMode);
+  const headerStyle = sanitizeHeaderStyle(project.theme.headerStyle);
+  const rendered = project.blocks
+    .map((block, i) => ({ block, html: renderBlockToHtml(block, i, project, anchors, rewriteAssetSrc) }))
+    .filter((r) => r.html);
+  const header = rendered.filter((r) => r.block.type === 'navbar').map((r) => r.html).join('\n');
+  let footer = rendered.filter((r) => r.block.type === 'footer').map((r) => r.html).join('\n');
+  const body = rendered.filter((r) => r.block.type !== 'navbar' && r.block.type !== 'footer');
+
+  let main = '';
+  if (layout === 'horizontal-slides') {
+    const slides = [...body.map((r) => r.html), ...(footer ? [footer] : [])];
+    footer = '';
+    const slideHeight = header && (headerStyle === 'classic-bar' || headerStyle === 'minimal-centered') ? 'calc(100vh - 76px)' : '100vh';
+    main = `<div class="sf-hslides" style="--sf-slide-h: ${slideHeight}"><div class="sf-track">${slides
+      .map((html) => `<div class="sf-slide">${html}</div>`)
+      .join('\n')}</div></div>`;
+  } else if (layout === 'bento-grid') {
+    const heroFirst = body[0]?.block.type === 'hero' ? body[0] : null;
+    const cells = heroFirst ? body.slice(1) : body;
+    main = `${heroFirst ? heroFirst.html : ''}<div class="sf-bento">${cells
+      .map((r, i) => `<div class="sf-cell ${BENTO_SPANS[i % BENTO_SPANS.length]}">${r.html}</div>`)
+      .join('\n')}</div>`;
+  } else if (layout === 'split-screen') {
+    let visual = '';
+    for (const r of body) {
+      const candidate = r.block.content.image || r.block.content.items?.find((it) => it.image)?.image;
+      const src = rewriteAssetSrc(candidate);
+      if (src) {
+        visual = `<img src="${escapeHtml(src)}" alt="" loading="lazy" decoding="async" />`;
+        break;
+      }
+    }
+    const brand = project.blocks.find((b) => b.type === 'navbar')?.content.brandName || project.name;
+    const panel = visual || `<div class="sf-split-empty"><strong style="font-family: var(--sf-font-heading); font-size: 2rem;">${escapeHtml(brand)}</strong></div>`;
+    main = `<div class="sf-split"><aside class="sf-split-visual" aria-hidden="true">${panel}</aside><div class="sf-split-content">${body
+      .map((r) => r.html)
+      .join('\n')}</div></div>`;
+  } else {
+    main = body.map((r) => r.html).join('\n');
+  }
+  return { header, main, footer, layout };
+}
+
+const THEME_TOGGLE_HTML = `<button type="button" class="sf-theme-toggle" data-sf-theme-toggle aria-pressed="false" aria-label="Basculer entre le mode clair et le mode sombre"><svg class="sf-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="sf-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>`;
+
+function renderCredits(project: SiteProject): string {
+  const credits = collectImageCredits(project);
+  if (credits.length === 0) return '';
+  return `<p class="sf-credits">Crédits photos : ${credits.map((c) => escapeHtml(c)).join(' · ')}</p>`;
+}
+
+function renderPageBody(project: SiteProject, body: RenderedBody, demoBanner: string, options: PageOptions): string {
+  const main = `<main id="contenu" class="sf-layout" data-layout="${body.layout}">\n${body.main}\n</main>`;
+  return `${demoBanner}
+  ${body.header}
+  ${main}
+  ${body.footer}
+  ${renderCredits(project)}
+  ${project.theme.visitorThemeToggle ? THEME_TOGGLE_HTML : ''}
+  ${buildInlineScripts(options)}`;
 }
 
 export function generateStandaloneHtml(project: SiteProject, options: PageOptions = {}): string {
@@ -1094,10 +1251,10 @@ export function generateStandaloneHtml(project: SiteProject, options: PageOption
     ? `<aside class="sf-demo-banner" role="note">${escapeHtml(DEMO_FICTION_BANNER_TEXT)}</aside>`
     : '';
   const anchors = buildAnchorMap(project.blocks);
-  const bodySections = renderBody(project, anchors, (src) => sanitizeUrl(src, ''));
+  const body = renderBody(project, anchors, (src) => sanitizeUrl(src, ''));
 
   return `<!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" data-theme="${project.theme.mode === 'dark' ? 'dark' : 'light'}">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -1111,12 +1268,8 @@ export function generateStandaloneHtml(project: SiteProject, options: PageOption
 ${css}
   </style>
 </head>
-<body id="top">
-  ${demoBanner}
-  <main>
-${bodySections}
-  </main>
-  ${buildInlineScripts(options)}
+<body id="top" data-header="${sanitizeHeaderStyle(project.theme.headerStyle)}">
+  ${renderPageBody(project, body, demoBanner, options)}
 </body>
 </html>`;
 }
@@ -1158,10 +1311,10 @@ export function generateSeparateHtmlAndCss(
     ? `<aside class="sf-demo-banner" role="note">${escapeHtml(DEMO_FICTION_BANNER_TEXT)}</aside>`
     : '';
   const anchors = buildAnchorMap(project.blocks);
-  const bodySections = renderBody(project, anchors, rewriteAssetSrc);
+  const body = renderBody(project, anchors, rewriteAssetSrc);
 
   const indexHtml = `<!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" data-theme="${project.theme.mode === 'dark' ? 'dark' : 'light'}">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -1173,12 +1326,8 @@ export function generateSeparateHtmlAndCss(
   <link rel="stylesheet" href="${escapeHtml(fontsUrl)}" />
   <link rel="stylesheet" href="style.css" />
 </head>
-<body id="top">
-  ${demoBanner}
-  <main>
-${bodySections}
-  </main>
-  ${buildInlineScripts(options)}
+<body id="top" data-header="${sanitizeHeaderStyle(project.theme.headerStyle)}">
+  ${renderPageBody(project, body, demoBanner, options)}
 </body>
 </html>`;
 

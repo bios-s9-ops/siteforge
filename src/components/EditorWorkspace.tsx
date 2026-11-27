@@ -12,7 +12,9 @@ import {
   Info,
   Laptop,
   Layers,
+  LayoutTemplate,
   MousePointerClick,
+  Pencil,
   Plus,
   Redo2,
   ShieldCheck,
@@ -44,9 +46,14 @@ import { collectIncompleteFields, DEMO_FICTION_BANNER_TEXT } from '../utils/hone
 import { BlockLibraryModal } from './BlockLibraryModal';
 import { BlockPalette } from './BlockPalette';
 import { DropZone } from './DropZone';
-import { BlockRenderer } from './BlockRenderer';
+import { CanvasStage, type StageItem } from './CanvasStage';
+import { deriveAlternatePalette } from '../utils/colorHarmony';
+import { sanitizeLayoutMode } from '../utils/effectsCatalog';
+import { BlockRenderer, type InlineTextTarget } from './BlockRenderer';
 import { ExportModal } from './ExportModal';
 import { LivePreviewModal } from './LivePreviewModal';
+import { NewPageModal } from './NewPageModal';
+import { downloadForgeFile } from '../utils/projectIO';
 import { type FocusFieldTarget, InspectorPanel, type InspectorTab } from './InspectorPanel';
 
 interface EditorWorkspaceProps {
@@ -77,6 +84,10 @@ export function EditorWorkspace({
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [liveOpen, setLiveOpen] = useState(false);
+  const [newPageOpen, setNewPageOpen] = useState(false);
+  const [previewMode, setPreviewMode] = useState(false);
+  const [altTheme, setAltTheme] = useState(false);
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
   const [originalityModalOpen, setOriginalityModalOpen] = useState(false);
   const [leftTab, setLeftTab] = useState<'blocks' | 'structure'>('blocks');
   const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
@@ -173,6 +184,47 @@ export function EditorWorkspace({
     const edge = 72;
     if (e.clientY < rect.top + edge) el.scrollTop -= 16;
     else if (e.clientY > rect.bottom - edge) el.scrollTop += 16;
+  };
+
+  /** Version claire / sombre alternative vue par le visiteur (bouton de bascule) */
+  const displayTheme = useMemo(() => {
+    if (!altTheme || !project.theme.visitorThemeToggle) return project.theme;
+    const toDark = project.theme.mode !== 'dark';
+    return { ...project.theme, mode: toDark ? ('dark' as const) : ('light' as const), palette: deriveAlternatePalette(project.theme.palette, toDark) };
+  }, [altTheme, project.theme]);
+
+  const fxKey = useMemo(
+    () =>
+      JSON.stringify([
+        sanitizeLayoutMode(project.theme.layoutMode),
+        project.blocks.map((b) => [
+          b.id,
+          b.animation,
+          b.animationDurationMs,
+          b.content.imageEffect,
+          Boolean(b.content.image),
+          Boolean(b.content.secondaryImage),
+          b.content.items?.map((i) => [i.imageEffect, Boolean(i.image)]),
+        ]),
+      ]),
+    [project.blocks, project.theme.layoutMode],
+  );
+
+  const handleCommitText = (blockId: string, target: InlineTextTarget, value: string) => {
+    const blocks = project.blocks.map((b) => {
+      if (b.id !== blockId) return b;
+      if (target.itemId) {
+        return {
+          ...b,
+          content: {
+            ...b.content,
+            items: b.content.items?.map((it) => (it.id === target.itemId ? { ...it, [target.field]: value } : it)),
+          },
+        };
+      }
+      return { ...b, content: { ...b.content, [target.field]: value } };
+    });
+    updateBlocks(blocks);
   };
 
   const activeSlot = dragPayload && hoverSlot !== null ? visualSlotFor(project.blocks, dragPayload, hoverSlot) : null;
@@ -321,6 +373,35 @@ export function EditorWorkspace({
           >
             <ShieldCheck className="w-3.5 h-3.5 text-[#B45309]" aria-hidden="true" />
             <span>Originalité</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setNewPageOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-sm border border-[#E5DEC9] bg-[#FFFFFF] hover:bg-[#F4EFE6] text-[#1C1917] text-xs font-semibold whitespace-nowrap cursor-pointer"
+          >
+            <LayoutTemplate className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>Nouvelle page</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => downloadForgeFile(project)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-sm border border-[#E5DEC9] bg-[#FFFFFF] hover:bg-[#F4EFE6] text-[#1C1917] text-xs font-semibold whitespace-nowrap cursor-pointer"
+            title="Enregistrer le projet pour le rouvrir plus tard ou le partager"
+          >
+            <Download className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>.forge.json</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setPreviewMode((v) => !v)}
+            aria-pressed={previewMode}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-sm border text-xs font-semibold whitespace-nowrap cursor-pointer ${
+              previewMode ? 'border-[#9A3412] bg-[#9A3412] text-white' : 'border-[#E5DEC9] bg-[#FFFFFF] hover:bg-[#F4EFE6] text-[#1C1917]'
+            }`}
+            title={previewMode ? 'Revenir à la modification' : 'Voir la page sans les outils d’édition'}
+          >
+            {previewMode ? <Pencil className="w-3.5 h-3.5" aria-hidden="true" /> : <Eye className="w-3.5 h-3.5" aria-hidden="true" />}
+            <span>{previewMode ? 'Modifier' : 'Aperçu'}</span>
           </button>
           <button
             type="button"
@@ -564,6 +645,7 @@ export function EditorWorkspace({
 
           {/* Scrollable Preview Frame */}
           <div
+            ref={setScrollEl}
             className="flex-1 overflow-auto p-4 md:p-6 flex justify-center items-start editor-scroll"
             onDragOver={handleCanvasDragOver}
             onDragEnd={endDrag}
@@ -599,83 +681,95 @@ export function EditorWorkspace({
                   </button>
                 </div>
               ) : (
-                <>
-                  {project.blocks.map((block, index) => {
-                    const slotHidden =
-                      dragPayload?.kind === 'move' && isNoopSlot(project.blocks, dragPayload.id, index);
+                <CanvasStage
+                  theme={displayTheme}
+                  fxKey={fxKey}
+                  scroller={scrollEl}
+                  previewMode={previewMode}
+                  altTheme={altTheme}
+                  onToggleTheme={() => setAltTheme((v) => !v)}
+                  splitImage={project.blocks.map((b) => b.content.image || b.content.items?.find((it) => it.image)?.image).find(Boolean)}
+                  items={project.blocks.map((block, index): StageItem => {
+                    const slotHidden = dragPayload?.kind === 'move' && isNoopSlot(project.blocks, dragPayload.id, index);
                     const isDragged = dragPayload?.kind === 'move' && dragPayload.id === block.id;
-                    return (
-                      <Fragment key={block.id}>
-                        <DropZone
-                          slot={index}
-                          isFirst={index === 0}
-                          dragging={dragPayload !== null}
-                          hovered={activeSlot === index}
-                          hidden={slotHidden}
-                          onHover={setHoverSlot}
-                          onDropHere={handleDropAt}
-                          onInsertClick={(slot) => {
-                            setInsertSlot(slot);
-                            setLibraryOpen(true);
-                          }}
-                        />
-                        <div
-                          className={isDragged ? 'opacity-40' : ''}
-                          onDragOver={(e) => {
-                            if (!dragPayload) return;
-                            e.preventDefault();
-                            e.dataTransfer.dropEffect = dragPayload.kind === 'new' ? 'copy' : 'move';
-                            const rect = e.currentTarget.getBoundingClientRect();
-                            setHoverSlot(slotFromPointer(index, e.clientY, rect.top, rect.height));
-                          }}
-                          onDrop={(e) => {
-                            if (!dragPayload) return;
-                            e.preventDefault();
-                            const rect = e.currentTarget.getBoundingClientRect();
-                            handleDropAt(
-                              slotFromPointer(index, e.clientY, rect.top, rect.height),
-                              e.dataTransfer.getData(DND_MIME),
-                            );
-                          }}
-                        >
-                          <BlockRenderer
-                            block={block}
-                            blockIndex={index}
-                            theme={project.theme}
-                            viewport={viewport}
-                            isSelected={block.id === selectedBlockId}
-                            isFirst={index === 0}
-                            isLast={index === project.blocks.length - 1}
-                            onSelect={() => {
-                              setSelectedBlockId(block.id);
-                              if (inspectorTab === 'todo') setInspectorTab('block');
+                    return {
+                      block,
+                      node: (
+                        <Fragment>
+                          {!previewMode && (
+                            <DropZone
+                              slot={index}
+                              isFirst={index === 0}
+                              dragging={dragPayload !== null}
+                              hovered={activeSlot === index}
+                              hidden={slotHidden}
+                              onHover={setHoverSlot}
+                              onDropHere={handleDropAt}
+                              onInsertClick={(slot) => {
+                                setInsertSlot(slot);
+                                setLibraryOpen(true);
+                              }}
+                            />
+                          )}
+                          <div
+                            className={isDragged ? 'opacity-40' : ''}
+                            onDragOver={(e) => {
+                              if (!dragPayload) return;
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = dragPayload.kind === 'new' ? 'copy' : 'move';
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              setHoverSlot(slotFromPointer(index, e.clientY, rect.top, rect.height));
                             }}
-                            onMove={(dir) => handleMove(block.id, dir)}
-                            onDuplicate={() => handleDuplicate(block.id)}
-                            onDelete={() => handleDelete(block.id)}
-                            onDragStartBlock={(e) => handleBlockDragStart(e, block)}
-                            onDragEndBlock={endDrag}
-                          />
-                        </div>
-                      </Fragment>
-                    );
+                            onDrop={(e) => {
+                              if (!dragPayload) return;
+                              e.preventDefault();
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              handleDropAt(slotFromPointer(index, e.clientY, rect.top, rect.height), e.dataTransfer.getData(DND_MIME));
+                            }}
+                          >
+                            <BlockRenderer
+                              block={block}
+                              blockIndex={index}
+                              theme={displayTheme}
+                              viewport={viewport}
+                              isSelected={block.id === selectedBlockId}
+                              isFirst={index === 0}
+                              isLast={index === project.blocks.length - 1}
+                              previewMode={previewMode}
+                              layoutMode={project.theme.layoutMode}
+                              onSelect={() => {
+                                setSelectedBlockId(block.id);
+                                if (inspectorTab === 'todo') setInspectorTab('block');
+                              }}
+                              onMove={(dir) => handleMove(block.id, dir)}
+                              onDuplicate={() => handleDuplicate(block.id)}
+                              onDelete={() => handleDelete(block.id)}
+                              onDragStartBlock={(e) => handleBlockDragStart(e, block)}
+                              onDragEndBlock={endDrag}
+                              onCommitText={(target, value) => handleCommitText(block.id, target, value)}
+                            />
+                          </div>
+                        </Fragment>
+                      ),
+                    };
                   })}
-                  <DropZone
-                    slot={project.blocks.length}
-                    dragging={dragPayload !== null}
-                    hovered={activeSlot === project.blocks.length}
-                    hidden={
-                      dragPayload?.kind === 'move' &&
-                      isNoopSlot(project.blocks, dragPayload.id, project.blocks.length)
-                    }
-                    onHover={setHoverSlot}
-                    onDropHere={handleDropAt}
-                    onInsertClick={(slot) => {
-                      setInsertSlot(slot);
-                      setLibraryOpen(true);
-                    }}
-                  />
-                </>
+                  tail={
+                    previewMode ? null : (
+                      <DropZone
+                        slot={project.blocks.length}
+                        dragging={dragPayload !== null}
+                        hovered={activeSlot === project.blocks.length}
+                        hidden={dragPayload?.kind === 'move' && isNoopSlot(project.blocks, dragPayload.id, project.blocks.length)}
+                        onHover={setHoverSlot}
+                        onDropHere={handleDropAt}
+                        onInsertClick={(slot) => {
+                          setInsertSlot(slot);
+                          setLibraryOpen(true);
+                        }}
+                      />
+                    )
+                  }
+                />
               )}
             </div>
           </div>
@@ -713,6 +807,16 @@ export function EditorWorkspace({
           setInsertSlot(null);
         }}
         onSelectBlock={handleAddBlock}
+      />
+
+      <NewPageModal
+        isOpen={newPageOpen}
+        project={project}
+        onClose={() => setNewPageOpen(false)}
+        onApply={(blocks, theme) => {
+          onChangeProject({ ...project, blocks, ...(theme ? { theme } : {}), updatedAt: new Date().toISOString() });
+          setSelectedBlockId(blocks[0]?.id ?? null);
+        }}
       />
 
       <LivePreviewModal isOpen={liveOpen} project={project} onClose={() => setLiveOpen(false)} />

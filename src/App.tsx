@@ -9,17 +9,11 @@ import {
   saveAllProjects,
   upsertProjectInList,
 } from './utils/demoSites';
-import {
-  canRedo,
-  canUndo,
-  createHistory,
-  type HistoryState,
-  pushHistory,
-  redoHistory,
-  undoHistory,
-} from './utils/history';
+import { ProposalsFlow } from './components/ProposalsFlow';
+import { useHistoryShortcuts, useProjectHistory } from './hooks/useProjectHistory';
+import { clearAllImages, createBlankProject, ForgeFileError, parseForgeFile } from './utils/projectIO';
 
-type AppScreen = 'welcome' | 'wizard' | 'editor';
+type AppScreen = 'welcome' | 'wizard' | 'ai' | 'editor';
 
 export default function App() {
   const [savedProjects, setSavedProjects] = useState<SiteProject[]>(() => loadSavedProjects());
@@ -30,11 +24,9 @@ export default function App() {
     return 'welcome';
   });
   const [wizardMode, setWizardMode] = useState<'inspiration' | 'scratch'>('scratch');
-  const [history, setHistory] = useState<HistoryState<SiteProject>>(() => {
-    const initialList = loadSavedProjects();
-    const initialProject = initialList[0] ?? createStarterProject('kora');
-    return createHistory(initialProject);
-  });
+  const [importError, setImportError] = useState('');
+  const history = useProjectHistory(() => loadSavedProjects()[0] ?? createStarterProject('kora'));
+  useHistoryShortcuts(screen === 'editor', history.undo, history.redo);
 
   // Réinitialise le défilement de la fenêtre lors des changements d'écran
   useEffect(() => {
@@ -52,8 +44,39 @@ export default function App() {
   }, [history.present, screen]);
 
   const openProjectInEditor = (project: SiteProject) => {
-    setHistory(createHistory(project));
+    history.reset(project);
     setScreen('editor');
+  };
+
+  const saveAndOpen = (project: SiteProject) => {
+    const nextList = upsertProjectInList(savedProjects, project);
+    setSavedProjects(nextList);
+    saveAllProjects(nextList);
+    openProjectInEditor(project);
+  };
+
+  const handleStartMode = (mode: 'inspiration' | 'scratch' | 'ai') => {
+    setImportError('');
+    if (mode === 'scratch') {
+      // Canevas vierge : aucune section, aucune image, aucun texte imposé
+      saveAndOpen(createBlankProject());
+      return;
+    }
+    if (mode === 'ai') {
+      setScreen('ai');
+      return;
+    }
+    setWizardMode('inspiration');
+    setScreen('wizard');
+  };
+
+  const handleImportFile = async (file: File) => {
+    try {
+      saveAndOpen(parseForgeFile(await file.text()));
+      setImportError('');
+    } catch (err) {
+      setImportError(err instanceof ForgeFileError ? err.message : 'Impossible de lire ce fichier.');
+    }
   };
 
   const handleOpenStarter = (preset: 'kora' | 'seve') => {
@@ -92,24 +115,26 @@ export default function App() {
         mode={wizardMode}
         onCancel={() => setScreen('welcome')}
         onComplete={(generatedProject) => {
-          const nextList = upsertProjectInList(savedProjects, generatedProject);
-          setSavedProjects(nextList);
-          saveAllProjects(nextList);
-          openProjectInEditor(generatedProject);
+          // Mode inspiration : jamais d'image reprise, tous les emplacements restent vides
+          saveAndOpen(wizardMode === 'inspiration' ? clearAllImages(generatedProject) : generatedProject);
         }}
       />
     );
+  }
+
+  if (screen === 'ai') {
+    return <ProposalsFlow onCancel={() => setScreen('welcome')} onChoose={saveAndOpen} />;
   }
 
   if (screen === 'editor') {
     return (
       <EditorWorkspace
         project={history.present}
-        canUndo={canUndo(history)}
-        canRedo={canRedo(history)}
-        onUndo={() => setHistory((h) => undoHistory(h))}
-        onRedo={() => setHistory((h) => redoHistory(h))}
-        onChangeProject={(nextProject) => setHistory((h) => pushHistory(h, nextProject))}
+        canUndo={history.canUndo}
+        canRedo={history.canRedo}
+        onUndo={history.undo}
+        onRedo={history.redo}
+        onChangeProject={history.push}
         onBackHome={() => setScreen('welcome')}
       />
     );
@@ -118,10 +143,9 @@ export default function App() {
   return (
     <WelcomeScreen
       savedProjects={savedProjects}
-      onStartMode={(mode) => {
-        setWizardMode(mode);
-        setScreen('wizard');
-      }}
+      onStartMode={handleStartMode}
+      onImportFile={handleImportFile}
+      importError={importError}
       onOpenProject={openProjectInEditor}
       onOpenStarter={handleOpenStarter}
       onDuplicateProject={handleDuplicateProject}

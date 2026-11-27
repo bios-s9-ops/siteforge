@@ -9,7 +9,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "tsx --test server/ai.test.ts src/utils/siteLogic.test.ts src/utils/publish.test.ts src/utils/blockOps.test.ts src/utils/effects.test.ts src/components/dragdrop.test.tsx src/components/canvas.test.tsx"
   },
   "dependencies": {
     "@google/genai": "^3.6.1",

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Check, Copy, EyeOff, GripVertical, Image as ImageIcon, Trash2 } from 'lucide-react';
-import type { SiteBlock, SiteTheme, ViewportMode } from '../types/site';
+import type { ImageEffectConfig, SiteBlock, SiteTheme, ViewportMode } from '../types/site';
+import { hasAnyImageEffect, sanitizeImageEffect, sanitizeSectionAnimation, clampDuration } from '../utils/effectsCatalog';
 import { getBlockDefinition } from '../utils/blockCatalog';
 import { computeBlockSurfaceColors, isTodoValue } from '../utils/honesty';
 import { getContrastTextColor, sanitizeColor } from '../utils/validation';
@@ -20,6 +21,12 @@ interface BlockRendererProps {
   /** Poignée de glisser-déposer : absente = pas de déplacement à la souris */
   onDragStartBlock?: (e: React.DragEvent<HTMLDivElement>) => void;
   onDragEndBlock?: () => void;
+  /** Modification du texte directement sur la page (désactivée en mode Aperçu) */
+  onCommitText?: (target: InlineTextTarget, value: string) => void;
+  /** Mode Aperçu : pas de contour, de poignée ni d'édition ; les animations jouent comme sur le site */
+  previewMode?: boolean;
+  /** Architecture de la page : ajoute l'attribut du récit au défilement */
+  layoutMode?: string;
 }
 
 const RADIUS_PX: Record<SiteTheme['borderRadius'], string> = {
@@ -36,8 +43,118 @@ const SPACING_PAD: Record<SiteTheme['spacing'], string> = {
   airy: '92px',
 };
 
-function TodoText({ value, fallback }: { value?: string; fallback?: string }) {
+/** Cible d'une modification de texte directement sur la page : un champ du bloc, ou d'un de ses éléments. */
+export interface InlineTextTarget {
+  field: string;
+  itemId?: string;
+}
+
+interface InlineEditApi {
+  enabled: boolean;
+  commit: (target: InlineTextTarget, value: string) => void;
+}
+
+const InlineEditContext = createContext<InlineEditApi>({ enabled: false, commit: () => {} });
+export const InlineEditProvider = InlineEditContext.Provider;
+
+/** Texte modifiable en cliquant dessus : Entrée valide, Échap annule, le collage est réduit à du texte brut. */
+function EditableText({
+  value,
+  field,
+  itemId,
+  placeholder,
+}: {
+  value: string;
+  field: string;
+  itemId?: string;
+  placeholder: string;
+}) {
+  const { commit } = useContext(InlineEditContext);
+  const ref = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (el && document.activeElement !== el && el.textContent !== value) el.textContent = value;
+  }, [value]);
+
+  const todo = isTodoValue(value);
+  return (
+    <span
+      ref={ref}
+      contentEditable
+      suppressContentEditableWarning
+      spellCheck
+      role="textbox"
+      aria-label={`Modifier : ${placeholder}`}
+      data-inline-edit={field}
+      data-placeholder={placeholder}
+      className={`sf-inline-edit${todo ? ' sf-inline-todo' : ''}`}
+      onFocus={(e) => {
+        const range = document.createRange();
+        range.selectNodeContents(e.currentTarget);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      }}
+      onBlur={(e) => {
+        const next = (e.currentTarget.textContent ?? '').replace(/\s+/g, ' ').trim();
+        if (next !== value) commit({ field, itemId }, next);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.currentTarget.blur();
+        } else if (e.key === 'Escape') {
+          e.currentTarget.textContent = value;
+          e.currentTarget.blur();
+        }
+      }}
+      onPaste={(e) => {
+        e.preventDefault();
+        const text = e.clipboardData.getData('text/plain').replace(/\s+/g, ' ');
+        document.execCommand('insertText', false, text);
+      }}
+    >
+      {value}
+    </span>
+  );
+}
+
+const FIELD_LABELS: Record<string, string> = {
+  heading: 'titre',
+  subheading: 'sous-titre',
+  kicker: 'surtitre',
+  body: 'texte',
+  brandName: 'nom de la marque',
+  ctaLabel: 'texte du bouton',
+  secondaryCtaLabel: 'texte du second bouton',
+  title: 'titre',
+  subtitle: 'sous-titre',
+  description: 'description',
+  price: 'prix',
+  email: 'e-mail',
+  phone: 'téléphone',
+  address: 'adresse',
+};
+
+function TodoText({
+  value,
+  fallback,
+  field,
+  itemId,
+}: {
+  value?: string;
+  fallback?: string;
+  field?: string;
+  itemId?: string;
+}) {
+  const edit = useContext(InlineEditContext);
   const display = value ?? fallback ?? '';
+
+  if (edit.enabled && field) {
+    return <EditableText value={value ?? ''} field={field} itemId={itemId} placeholder={FIELD_LABELS[field] ?? field} />;
+  }
+
   if (!display) return null;
   if (isTodoValue(display)) {
     return (
@@ -54,11 +171,17 @@ function PreviewImage({
   alt,
   aspectClass,
   radius,
+  effect,
+  secondary,
+  secondaryAlt,
 }: {
   src?: string;
   alt?: string;
   aspectClass: string;
   radius: string;
+  effect?: ImageEffectConfig;
+  secondary?: string;
+  secondaryAlt?: string;
 }) {
   const [failed, setFailed] = useState(false);
 
@@ -69,20 +192,50 @@ function PreviewImage({
         style={{ borderRadius: radius }}
       >
         <ImageIcon className="w-7 h-7 opacity-60" aria-hidden="true" />
-        <span className="text-xs font-medium">{alt || 'Visuel à personnaliser'}</span>
+        <span className="text-xs font-medium">{alt || 'Emplacement d’image : ajoutez une photo'}</span>
       </div>
     );
   }
 
+  const fx = effect ? sanitizeImageEffect(effect) : null;
+  if (!fx || !hasAnyImageEffect(fx)) {
+    return (
+      <img
+        src={src}
+        alt={alt || ''}
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+        className={`w-full ${aspectClass} object-cover`}
+        style={{ borderRadius: radius }}
+      />
+    );
+  }
+
+  // Même enveloppe que dans le site exporté : le moteur d'effets partagé l'anime sur la page d'édition
+  const hasAfter = fx.effect3d === 'before-after-slider' && Boolean(secondary);
+  const fx3d = fx.effect3d === 'before-after-slider' && !hasAfter ? 'none' : fx.effect3d;
   return (
-    <img
-      src={src}
-      alt={alt || ''}
-      referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
-      className={`w-full ${aspectClass} object-cover`}
-      style={{ borderRadius: radius }}
-    />
+    <div
+      className={`sf-fx w-full ${aspectClass}`}
+      data-fx-scroll={fx.scroll}
+      data-fx-scroll-i={fx.scrollIntensity}
+      data-fx-3d={fx3d}
+      data-fx-3d-i={fx.effect3dIntensity}
+      style={
+        {
+          borderRadius: radius,
+          '--k3': (fx.effect3dIntensity / 100).toFixed(2),
+          '--ks': (fx.scrollIntensity / 100).toFixed(2),
+        } as React.CSSProperties
+      }
+    >
+      <div className="sf-fx-3d" style={{ borderRadius: radius }}>
+        <div className="sf-fx-inner">
+          <img src={src} alt={alt || ''} referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+          {hasAfter && <img className="sf-fx-after" src={secondary} alt={secondaryAlt || ''} referrerPolicy="no-referrer" />}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -100,6 +253,9 @@ export function BlockRenderer({
   onDelete,
   onDragStartBlock,
   onDragEndBlock,
+  onCommitText,
+  previewMode = false,
+  layoutMode,
 }: BlockRendererProps) {
   const [openFaqIdx, setOpenFaqIdx] = useState<number>(0);
   const [contactSent, setContactSent] = useState<boolean>(false);
@@ -167,7 +323,7 @@ export function BlockRenderer({
               )}
 
               <span style={{ fontFamily: headingFont }} className="font-bold text-lg whitespace-nowrap tracking-tight">
-                {c.brandName || 'Mon Site'}
+                <TodoText value={c.brandName} fallback="Mon Site" field="brandName" />
               </span>
 
               {block.variant !== 'minimal' && !isMobile && (
@@ -190,7 +346,7 @@ export function BlockRenderer({
                   }}
                   className="px-4 py-2 text-xs font-semibold whitespace-nowrap shrink-0"
                 >
-                  {c.ctaLabel}
+                  <TodoText value={c.ctaLabel} field="ctaLabel" />
                 </span>
               )}
             </div>
@@ -213,21 +369,21 @@ export function BlockRenderer({
                 <div className="space-y-4 max-w-4xl">
                   {c.kicker && (
                     <span style={{ color: primary }} className="block text-xs font-semibold uppercase tracking-widest">
-                      {c.kicker}
+                      <TodoText value={c.kicker} field="kicker" />
                     </span>
                   )}
                   <h1
                     style={{ fontFamily: headingFont }}
                     className={`${isMobile ? 'text-4xl' : 'text-3xl md:text-5xl lg:text-6xl'} font-semibold leading-[1.04] tracking-tight text-balance`}
                   >
-                    <TodoText value={c.heading} />
+                    <TodoText value={c.heading} field="heading" />
                   </h1>
                 </div>
                 <div className={`grid ${asymGridClass} gap-6 items-end`}>
                   <div className={isMobile ? '' : 'md:col-span-7'}>
                     {c.subheading && (
                       <p style={{ color: muted }} className="text-base md:text-lg leading-relaxed max-w-xl">
-                        <TodoText value={c.subheading} />
+                        <TodoText value={c.subheading} field="subheading" />
                       </p>
                     )}
                   </div>
@@ -237,7 +393,7 @@ export function BlockRenderer({
                         style={{ backgroundColor: primary, color: onPrimary, borderRadius: btnRadius, boxShadow: btnShadow }}
                         className="px-5 py-2.5 text-sm font-semibold"
                       >
-                        {c.ctaLabel}
+                        <TodoText value={c.ctaLabel} field="ctaLabel" />
                       </span>
                     )}
                     {c.secondaryCtaLabel && (
@@ -245,12 +401,12 @@ export function BlockRenderer({
                         style={{ border: `${borderWidth} solid ${text}`, borderRadius: btnRadius, color: text }}
                         className="px-5 py-2.5 text-sm font-semibold"
                       >
-                        {c.secondaryCtaLabel}
+                        <TodoText value={c.secondaryCtaLabel} field="secondaryCtaLabel" />
                       </span>
                     )}
                   </div>
                 </div>
-                <PreviewImage src={c.image} alt={c.imageAlt || c.heading} aspectClass="aspect-[21/9]" radius={radius} />
+                <PreviewImage src={c.image} alt={c.imageAlt || c.heading} aspectClass="aspect-[21/9]" radius={radius} effect={c.imageEffect} secondary={c.secondaryImage} secondaryAlt={c.secondaryImageAlt} />
               </div>
             </section>
           );
@@ -275,18 +431,18 @@ export function BlockRenderer({
               <div className={isCentered ? 'max-w-2xl mx-auto space-y-4' : `${isMobile ? '' : 'md:col-span-7'} space-y-4`}>
                 {c.kicker && (
                   <span style={{ color: primary }} className="block text-xs font-semibold uppercase tracking-widest">
-                    {c.kicker}
+                    <TodoText value={c.kicker} field="kicker" />
                   </span>
                 )}
                 <h1
                   style={{ fontFamily: headingFont }}
                   className={`${isMobile ? 'text-3xl' : 'text-3xl md:text-4xl lg:text-6xl'} font-semibold leading-[1.06] tracking-tight text-balance`}
                 >
-                  <TodoText value={c.heading} />
+                  <TodoText value={c.heading} field="heading" />
                 </h1>
                 {c.subheading && (
                   <p style={{ color: muted }} className="text-base leading-relaxed max-w-xl">
-                    <TodoText value={c.subheading} />
+                    <TodoText value={c.subheading} field="subheading" />
                   </p>
                 )}
                 <div className={`flex flex-wrap gap-3 pt-2 ${isCentered ? 'justify-center' : ''}`}>
@@ -295,7 +451,7 @@ export function BlockRenderer({
                       style={{ backgroundColor: primary, color: onPrimary, borderRadius: btnRadius, boxShadow: btnShadow }}
                       className="px-5 py-2.5 text-sm font-semibold"
                     >
-                      {c.ctaLabel}
+                      <TodoText value={c.ctaLabel} field="ctaLabel" />
                     </span>
                   )}
                   {c.secondaryCtaLabel && (
@@ -303,7 +459,7 @@ export function BlockRenderer({
                       style={{ border: `${borderWidth} solid ${text}`, borderRadius: btnRadius, color: text }}
                       className="px-5 py-2.5 text-sm font-semibold"
                     >
-                      {c.secondaryCtaLabel}
+                      <TodoText value={c.secondaryCtaLabel} field="secondaryCtaLabel" />
                     </span>
                   )}
                 </div>
@@ -314,6 +470,9 @@ export function BlockRenderer({
                   alt={c.imageAlt || c.heading}
                   aspectClass={isCentered ? 'aspect-video' : 'aspect-[4/3]'}
                   radius={radius}
+                  effect={c.imageEffect}
+                  secondary={c.secondaryImage}
+                  secondaryAlt={c.secondaryImageAlt}
                 />
               </div>
             </div>
@@ -324,22 +483,22 @@ export function BlockRenderer({
       case 'about': {
         const mediaCol = (
           <div className={isMobile ? '' : 'md:col-span-5'}>
-            <PreviewImage src={c.image} alt={c.imageAlt || c.heading} aspectClass="aspect-[4/3]" radius={radius} />
+            <PreviewImage src={c.image} alt={c.imageAlt || c.heading} aspectClass="aspect-[4/3]" radius={radius} effect={c.imageEffect} secondary={c.secondaryImage} secondaryAlt={c.secondaryImageAlt} />
           </div>
         );
         const textCol = (
           <div className={`${isMobile ? '' : 'md:col-span-7'} space-y-4`}>
             {c.kicker && (
               <span style={{ color: primary }} className="block text-xs font-semibold uppercase tracking-widest">
-                {c.kicker}
+                <TodoText value={c.kicker} field="kicker" />
               </span>
             )}
             <h2 style={{ fontFamily: headingFont }} className="text-3xl md:text-4xl font-semibold leading-[1.1] text-balance">
-              <TodoText value={c.heading} />
+              <TodoText value={c.heading} field="heading" />
             </h2>
             {c.body && (
               <p style={{ color: muted }} className="text-sm md:text-base leading-relaxed max-w-xl">
-                <TodoText value={c.body} />
+                <TodoText value={c.body} field="body" />
               </p>
             )}
             {c.ctaLabel && (
@@ -347,7 +506,7 @@ export function BlockRenderer({
                 style={{ border: `${borderWidth} solid ${text}`, borderRadius: btnRadius }}
                 className="inline-block px-4 py-2 text-sm font-semibold"
               >
-                {c.ctaLabel}
+                <TodoText value={c.ctaLabel} field="ctaLabel" />
               </span>
             )}
           </div>
@@ -395,15 +554,15 @@ export function BlockRenderer({
               <div className="max-w-2xl space-y-2">
                 {c.kicker && (
                   <span style={{ color: primary }} className="block text-xs font-semibold uppercase tracking-widest">
-                    {c.kicker}
+                    <TodoText value={c.kicker} field="kicker" />
                   </span>
                 )}
                 <h2 style={{ fontFamily: headingFont }} className="text-3xl md:text-4xl font-semibold leading-[1.1] text-balance">
-                  <TodoText value={c.heading} />
+                  <TodoText value={c.heading} field="heading" />
                 </h2>
                 {c.subheading && (
                   <p style={{ color: muted }} className="text-sm md:text-base">
-                    <TodoText value={c.subheading} />
+                    <TodoText value={c.subheading} field="subheading" />
                   </p>
                 )}
               </div>
@@ -421,10 +580,10 @@ export function BlockRenderer({
                           0{idx + 1}.
                         </span>
                         <h3 style={{ fontFamily: headingFont }} className="text-xl font-semibold">
-                          <TodoText value={it.title} />
+                          <TodoText value={it.title} field="title" itemId={it.id} />
                         </h3>
                         <p style={{ color: muted }} className="text-sm">
-                          <TodoText value={it.description} />
+                          <TodoText value={it.description} field="description" itemId={it.id} />
                         </p>
                       </div>
                       {it.meta && (
@@ -453,10 +612,10 @@ export function BlockRenderer({
                         </span>
                       )}
                       <h3 style={{ fontFamily: headingFont }} className="text-lg font-semibold">
-                        <TodoText value={it.title} />
+                        <TodoText value={it.title} field="title" itemId={it.id} />
                       </h3>
                       <p style={{ color: muted }} className="text-sm leading-relaxed">
-                        <TodoText value={it.description} />
+                        <TodoText value={it.description} field="description" itemId={it.id} />
                       </p>
                     </div>
                   ))}
@@ -481,7 +640,7 @@ export function BlockRenderer({
               <div className="space-y-2 max-w-2xl">
                 {c.kicker && (
                   <span style={{ color: primary }} className="block text-xs font-semibold uppercase tracking-widest">
-                    {c.kicker}
+                    <TodoText value={c.kicker} field="kicker" />
                   </span>
                 )}
                 <h2 style={{ fontFamily: headingFont }} className="text-3xl md:text-4xl font-semibold leading-[1.1] text-balance">
@@ -499,14 +658,14 @@ export function BlockRenderer({
                     key={it.id}
                     className={`space-y-2 ${block.variant === 'masonry-grid' && idx === 0 && !isMobile ? 'md:col-span-2' : ''}`}
                   >
-                    <PreviewImage src={it.image} alt={it.imageAlt || it.title} aspectClass="aspect-[4/3]" radius={radius} />
+                    <PreviewImage src={it.image} alt={it.imageAlt || it.title} aspectClass="aspect-[4/3]" radius={radius} effect={it.imageEffect} />
                     <figcaption>
                       <div className="font-semibold text-sm">
-                        <TodoText value={it.title} />
+                        <TodoText value={it.title} field="title" itemId={it.id} />
                       </div>
                       {it.subtitle && (
                         <div style={{ color: muted }} className="text-xs">
-                          <TodoText value={it.subtitle} />
+                          <TodoText value={it.subtitle} field="subtitle" itemId={it.id} />
                         </div>
                       )}
                     </figcaption>
@@ -532,7 +691,7 @@ export function BlockRenderer({
               <div className="space-y-2 max-w-2xl">
                 {c.kicker && (
                   <span style={{ color: primary }} className="block text-xs font-semibold uppercase tracking-widest">
-                    {c.kicker}
+                    <TodoText value={c.kicker} field="kicker" />
                   </span>
                 )}
                 <h2 style={{ fontFamily: headingFont }} className="text-3xl md:text-4xl font-semibold leading-[1.1] text-balance">
@@ -564,19 +723,19 @@ export function BlockRenderer({
                     }`}
                   >
                     <div className={block.variant === 'featured-list' && !isMobile ? 'md:w-56 shrink-0' : ''}>
-                      <PreviewImage src={it.image} alt={it.imageAlt || it.title} aspectClass="aspect-[4/3]" radius={radius} />
+                      <PreviewImage src={it.image} alt={it.imageAlt || it.title} aspectClass="aspect-[4/3]" radius={radius} effect={it.imageEffect} />
                     </div>
                     <div className="flex-1 space-y-2">
                       <div className="flex items-baseline justify-between gap-3">
                         <h3 style={{ fontFamily: headingFont }} className="font-semibold text-lg">
-                          <TodoText value={it.title} />
+                          <TodoText value={it.title} field="title" itemId={it.id} />
                         </h3>
                         <span className="font-bold text-sm tabular-nums">
-                          <TodoText value={it.price || 'À compléter'} />
+                          <TodoText value={it.price || 'À compléter'} field="price" itemId={it.id} />
                         </span>
                       </div>
                       <p style={{ color: muted }} className="text-sm">
-                        <TodoText value={it.description} />
+                        <TodoText value={it.description} field="description" itemId={it.id} />
                       </p>
                       {it.linkLabel && (
                         <span
@@ -609,7 +768,7 @@ export function BlockRenderer({
               <div className="space-y-2 max-w-2xl">
                 {c.kicker && (
                   <span style={{ color: primary }} className="block text-xs font-semibold uppercase tracking-widest">
-                    {c.kicker}
+                    <TodoText value={c.kicker} field="kicker" />
                   </span>
                 )}
                 <h2 style={{ fontFamily: headingFont }} className="text-3xl md:text-4xl font-semibold leading-[1.1] text-balance">
@@ -635,7 +794,7 @@ export function BlockRenderer({
                     <div className="space-y-3">
                       <div>
                         <h3 style={{ fontFamily: headingFont }} className="font-bold text-xl">
-                          <TodoText value={it.title} />
+                          <TodoText value={it.title} field="title" itemId={it.id} />
                         </h3>
                         {it.meta && (
                           <div style={{ color: muted }} className="text-xs">
@@ -644,10 +803,10 @@ export function BlockRenderer({
                         )}
                       </div>
                       <div style={{ fontFamily: headingFont }} className="text-3xl font-semibold tabular-nums">
-                        <TodoText value={it.price || 'À compléter'} />
+                        <TodoText value={it.price || 'À compléter'} field="price" itemId={it.id} />
                       </div>
                       <p style={{ color: muted }} className="text-sm">
-                        <TodoText value={it.description} />
+                        <TodoText value={it.description} field="description" itemId={it.id} />
                       </p>
                       {it.features && it.features.length > 0 && (
                         <ul className="space-y-1.5 pt-2 text-xs">
@@ -696,7 +855,7 @@ export function BlockRenderer({
               <div className="space-y-2">
                 {c.kicker && (
                   <span style={{ color: primary }} className="block text-xs font-semibold uppercase tracking-widest">
-                    {c.kicker}
+                    <TodoText value={c.kicker} field="kicker" />
                   </span>
                 )}
                 <h2 style={{ fontFamily: headingFont }} className="text-3xl md:text-4xl font-semibold leading-[1.1] text-balance">
@@ -719,15 +878,15 @@ export function BlockRenderer({
                     className="p-6 flex flex-col justify-between gap-4"
                   >
                     <p className="text-sm md:text-base leading-relaxed">
-                      <TodoText value={it.description || 'À compléter'} />
+                      <TodoText value={it.description || 'À compléter'} field="description" itemId={it.id} />
                     </p>
                     <footer>
                       <div className="font-semibold text-sm">
-                        <TodoText value={it.title} />
+                        <TodoText value={it.title} field="title" itemId={it.id} />
                       </div>
                       {it.subtitle && (
                         <div style={{ color: muted }} className="text-xs">
-                          <TodoText value={it.subtitle} />
+                          <TodoText value={it.subtitle} field="subtitle" itemId={it.id} />
                         </div>
                       )}
                     </footer>
@@ -753,7 +912,7 @@ export function BlockRenderer({
               <div className="space-y-2">
                 {c.kicker && (
                   <span style={{ color: primary }} className="block text-xs font-semibold uppercase tracking-widest">
-                    {c.kicker}
+                    <TodoText value={c.kicker} field="kicker" />
                   </span>
                 )}
                 <h2 style={{ fontFamily: headingFont }} className="text-3xl md:text-4xl font-semibold leading-[1.1] text-balance">
@@ -782,7 +941,7 @@ export function BlockRenderer({
                       </button>
                       {isOpen && (
                         <p style={{ color: muted }} className="text-sm mt-2 leading-relaxed">
-                          <TodoText value={it.description} />
+                          <TodoText value={it.description} field="description" itemId={it.id} />
                         </p>
                       )}
                     </div>
@@ -809,7 +968,7 @@ export function BlockRenderer({
                 <div className="space-y-1">
                   {c.kicker && (
                     <span style={{ color: primary }} className="block text-xs font-semibold uppercase tracking-widest">
-                      {c.kicker}
+                      <TodoText value={c.kicker} field="kicker" />
                     </span>
                   )}
                   <h2 style={{ fontFamily: headingFont }} className="text-3xl font-semibold leading-[1.1] text-balance">
@@ -825,7 +984,7 @@ export function BlockRenderer({
                     className="p-5 space-y-1"
                   >
                     <div style={{ fontFamily: headingFont, color: primary }} className="text-3xl font-semibold tabular-nums">
-                      <TodoText value={it.title} />
+                      <TodoText value={it.title} field="title" itemId={it.id} />
                     </div>
                     <div className="font-semibold text-sm">{it.subtitle}</div>
                     {it.meta && (
@@ -855,7 +1014,7 @@ export function BlockRenderer({
               <div className="space-y-2">
                 {c.kicker && (
                   <span style={{ color: primary }} className="block text-xs font-semibold uppercase tracking-widest">
-                    {c.kicker}
+                    <TodoText value={c.kicker} field="kicker" />
                   </span>
                 )}
                 <h2 style={{ fontFamily: headingFont }} className="text-3xl md:text-4xl font-semibold leading-[1.1] text-balance">
@@ -869,19 +1028,19 @@ export function BlockRenderer({
                     style={{ backgroundColor: cardBg, border: `${borderWidth} solid ${borderCol}`, borderRadius: radius }}
                     className="p-5 space-y-3"
                   >
-                    <PreviewImage src={it.image} alt={it.imageAlt || it.title} aspectClass="aspect-square" radius={radius} />
+                    <PreviewImage src={it.image} alt={it.imageAlt || it.title} aspectClass="aspect-square" radius={radius} effect={it.imageEffect} />
                     <div>
                       <h3 style={{ fontFamily: headingFont }} className="font-bold text-lg">
-                        <TodoText value={it.title} />
+                        <TodoText value={it.title} field="title" itemId={it.id} />
                       </h3>
                       {it.subtitle && (
                         <div style={{ color: primary }} className="text-xs font-semibold">
-                          <TodoText value={it.subtitle} />
+                          <TodoText value={it.subtitle} field="subtitle" itemId={it.id} />
                         </div>
                       )}
                     </div>
                     <p style={{ color: muted }} className="text-sm">
-                      <TodoText value={it.description} />
+                      <TodoText value={it.description} field="description" itemId={it.id} />
                     </p>
                   </article>
                 ))}
@@ -905,7 +1064,7 @@ export function BlockRenderer({
               <div className="space-y-2 max-w-2xl">
                 {c.kicker && (
                   <span style={{ color: primary }} className="block text-xs font-semibold uppercase tracking-widest">
-                    {c.kicker}
+                    <TodoText value={c.kicker} field="kicker" />
                   </span>
                 )}
                 <h2 style={{ fontFamily: headingFont }} className="text-3xl font-semibold leading-[1.1] text-balance">
@@ -925,7 +1084,7 @@ export function BlockRenderer({
                     className="p-4 space-y-1"
                   >
                     <div style={{ fontFamily: headingFont }} className="font-semibold text-base">
-                      <TodoText value={it.title} />
+                      <TodoText value={it.title} field="title" itemId={it.id} />
                     </div>
                     {it.subtitle && (
                       <div style={{ color: muted }} className="text-xs">
@@ -960,7 +1119,7 @@ export function BlockRenderer({
               <div className="space-y-2 max-w-xl">
                 {c.kicker && (
                   <span style={{ color: primary }} className="block text-xs font-semibold uppercase tracking-widest">
-                    {c.kicker}
+                    <TodoText value={c.kicker} field="kicker" />
                   </span>
                 )}
                 <h2 style={{ fontFamily: headingFont }} className="text-3xl md:text-4xl font-semibold leading-[1.08] text-balance">
@@ -973,7 +1132,7 @@ export function BlockRenderer({
                   style={{ backgroundColor: primary, color: onPrimary, borderRadius: btnRadius, boxShadow: btnShadow }}
                   className="inline-block px-6 py-3 text-sm font-semibold whitespace-nowrap shrink-0"
                 >
-                  {c.ctaLabel}
+                  <TodoText value={c.ctaLabel} field="ctaLabel" />
                 </span>
               )}
             </div>
@@ -999,7 +1158,7 @@ export function BlockRenderer({
               <div className={`${block.variant === 'centered-form' || isMobile ? '' : 'md:col-span-5'} space-y-3`}>
                 {c.kicker && (
                   <span style={{ color: primary }} className="block text-xs font-semibold uppercase tracking-widest">
-                    {c.kicker}
+                    <TodoText value={c.kicker} field="kicker" />
                   </span>
                 )}
                 <h2 style={{ fontFamily: headingFont }} className="text-3xl md:text-4xl font-semibold leading-[1.1] text-balance">
@@ -1012,13 +1171,13 @@ export function BlockRenderer({
                 )}
                 <div style={{ color: muted }} className="space-y-2 text-sm pt-2">
                   <div>
-                    <strong>E-mail :</strong> <TodoText value={c.email || 'À compléter'} />
+                    <strong>E-mail :</strong> <TodoText value={c.email || 'À compléter'} field="email" />
                   </div>
                   <div>
-                    <strong>Téléphone :</strong> <TodoText value={c.phone || 'À compléter'} />
+                    <strong>Téléphone :</strong> <TodoText value={c.phone || 'À compléter'} field="phone" />
                   </div>
                   <div>
-                    <strong>Adresse :</strong> <TodoText value={c.address || 'À compléter'} />
+                    <strong>Adresse :</strong> <TodoText value={c.address || 'À compléter'} field="address" />
                   </div>
                 </div>
               </div>
@@ -1108,7 +1267,7 @@ export function BlockRenderer({
               <div className="flex flex-wrap items-center justify-between gap-6">
                 <div>
                   <div style={{ fontFamily: headingFont }} className="font-bold text-lg">
-                    {c.brandName || 'Mon Site'}
+                    <TodoText value={c.brandName} fallback="Mon Site" field="brandName" />
                   </div>
                   {c.subheading && (
                     <p style={{ color: muted }} className="text-xs mt-1">
@@ -1133,12 +1292,21 @@ export function BlockRenderer({
 
   return (
     <div
-      onClick={onSelect}
+      onClick={previewMode ? undefined : onSelect}
+      data-block-id={block.id}
+      data-anim={block.type !== 'navbar' && sanitizeSectionAnimation(block.animation) !== 'none' ? sanitizeSectionAnimation(block.animation) : undefined}
+      data-story={layoutMode === 'scroll-story' && block.type !== 'navbar' && block.type !== 'footer' ? '' : undefined}
+      style={{ '--sf-anim-ms': `${clampDuration(block.animationDurationMs)}ms` } as React.CSSProperties}
       className={`relative group transition-shadow ${
-        isSelected ? 'ring-2 ring-[#9A3412] ring-inset' : 'hover:ring-1 hover:ring-[#9A3412]/50 hover:ring-inset'
+        previewMode
+          ? ''
+          : isSelected
+            ? 'ring-2 ring-[#9A3412] ring-inset'
+            : 'hover:ring-1 hover:ring-[#9A3412]/50 hover:ring-inset'
       } ${!block.visible ? 'opacity-45' : ''}`}
     >
-      {onDragStartBlock && (
+      <InlineEditProvider value={{ enabled: !previewMode && Boolean(onCommitText), commit: onCommitText ?? (() => {}) }}>
+      {!previewMode && onDragStartBlock && (
         <div
           draggable
           onDragStart={onDragStartBlock}
@@ -1155,7 +1323,7 @@ export function BlockRenderer({
         </div>
       )}
 
-      {isSelected && (
+      {!previewMode && isSelected && (
         <div
           className={`absolute ${block.type === 'navbar' ? 'bottom-1 right-2' : 'top-2 right-2'} z-20 flex items-center gap-1 bg-[#1C1917] text-[#FBF8F3] rounded-sm px-2 py-1 text-xs`}
           onClick={(e) => e.stopPropagation()}
@@ -1200,6 +1368,7 @@ export function BlockRenderer({
       )}
 
       {renderInner()}
+      </InlineEditProvider>
     </div>
   );
 }

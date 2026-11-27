@@ -19,7 +19,6 @@ import {
 } from 'lucide-react';
 import {
   ApiClientError,
-  apiGenerateIllustration,
   apiGenerateSeo,
   apiRegenerateBlock,
   apiRewriteText,
@@ -39,9 +38,14 @@ import {
   ART_DIRECTIONS,
   CURATED_FONT_PAIRINGS,
 } from '../utils/artDirections';
-import { createBlockId, getBlockDefinition, STUDIO_MEDIA_LIBRARY } from '../utils/blockCatalog';
+import { createBlockId, getBlockDefinition } from '../utils/blockCatalog';
+import { MediaPicker } from './MediaPicker';
+import { AnimationControls, ImageEffectControls } from './EffectControls';
+import { DEFAULT_IMAGE_EFFECT } from '../utils/effectsCatalog';
 import { collectIncompleteFields, isEmptyOrTodo, isTodoValue } from '../utils/honesty';
 import { PublishPanel } from './PublishPanel';
+import { AiNotice } from './AiNotice';
+import { ColorEditor, FontSelector, LayoutControls } from './StyleControls';
 
 export type InspectorTab = 'block' | 'style' | 'seo' | 'publish' | 'todo';
 
@@ -84,10 +88,6 @@ export function InspectorPanel({
   // Gemini text rewrite state
   const [rewritingField, setRewritingField] = useState<string | null>(null);
 
-  // Gemini illustration state
-  const [illustrationPrompt, setIllustrationPrompt] = useState('');
-  const [illustrationTarget, setIllustrationTarget] = useState<{ itemId?: string } | null>(null);
-  const [illustrationLoading, setIllustrationLoading] = useState(false);
 
   // Gemini style suggestions state
   const [stylesLoading, setStylesLoading] = useState(false);
@@ -163,22 +163,6 @@ export function InspectorPanel({
     });
   };
 
-  const handleFileImage = (e: React.ChangeEvent<HTMLInputElement>, itemId?: string) => {
-    const file = e.target.files?.[0];
-    if (!file || !file.type.startsWith('image/')) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        if (itemId) {
-          updateItem(itemId, { image: reader.result });
-        } else {
-          updateContent({ image: reader.result });
-        }
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
   const handleRegenerateBlock = async (customInstruction?: string) => {
     if (!selectedBlock) return;
     const base = (customInstruction ?? regenPrompt).trim() || 'Rends ce bloc plus clair, concret et sans superlatif';
@@ -217,29 +201,6 @@ export function InspectorPanel({
       setRegenError(err instanceof ApiClientError ? err.message : 'Impossible de réécrire le texte.');
     } finally {
       setRewritingField(null);
-    }
-  };
-
-  const handleGenerateIllustration = async () => {
-    if (!selectedBlock || !illustrationPrompt.trim()) return;
-    setIllustrationLoading(true);
-    try {
-      const { dataUrl, title } = await apiGenerateIllustration({
-        prompt: illustrationPrompt.trim(),
-        primaryColor: project.theme.palette.primary,
-        secondaryColor: project.theme.palette.secondary,
-      });
-      if (illustrationTarget?.itemId) {
-        updateItem(illustrationTarget.itemId, { image: dataUrl, imageAlt: title });
-      } else {
-        updateContent({ image: dataUrl, imageAlt: title });
-      }
-      setIllustrationPrompt('');
-      setIllustrationTarget(null);
-    } catch (err) {
-      setRegenError(err instanceof ApiClientError ? err.message : 'Impossible de créer l’illustration.');
-    } finally {
-      setIllustrationLoading(false);
     }
   };
 
@@ -464,6 +425,7 @@ export function InspectorPanel({
                     aria-label="Consigne de régénération pour Gemini"
                     className="w-full px-3 py-1.5 text-xs bg-[#FFFFFF] border border-[#E5DEC9] rounded-sm focus:outline-none focus:border-[#9A3412]"
                   />
+                  <AiNotice className="mb-2" />
                   <div className="flex flex-wrap gap-1.5" role="group" aria-label="Ton du texte">
                     {['Concis', 'Professionnel', 'Chaleureux', 'Persuasif', 'Informatif'].map((tone) => (
                       <button
@@ -717,87 +679,61 @@ export function InspectorPanel({
                   )}
                 </div>
 
-                {/* Block Main Image Picker */}
+                {/* Image principale du bloc : import, photos libres de droits, lien, effets */}
                 {selectedBlock.content.image !== undefined && (
-                  <div className="space-y-2.5 pt-2 border-t border-[#E5DEC9]">
-                    <label className="block text-xs font-semibold text-[#1C1917]">Image du bloc</label>
-                    <div className="flex items-center gap-2">
-                      <label className="flex-1 py-2 px-3 rounded-sm border border-[#E5DEC9] bg-[#FFFFFF] hover:bg-[#F4EFE6] text-xs font-medium text-[#1C1917] flex items-center justify-center gap-1.5 cursor-pointer">
-                        <Upload className="w-3.5 h-3.5" aria-hidden="true" />
-                        <span>Importer</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={(e) => handleFileImage(e)}
-                          className="sr-only"
-                        />
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => setIllustrationTarget({})}
-                        className="flex-1 py-2 px-3 rounded-sm border border-[#E5DEC9] bg-[#FFFFFF] hover:bg-[#F4EFE6] text-xs font-medium text-[#1C1917] flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        <ImageIcon className="w-3.5 h-3.5" aria-hidden="true" />
-                        <span>Illustration IA</span>
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-4 gap-1.5">
-                      {STUDIO_MEDIA_LIBRARY.map((m) => (
-                        <button
-                          key={m.id}
-                          type="button"
-                          onClick={() => updateContent({ image: m.url, imageAlt: m.alt })}
-                          title={m.label}
-                          className={`rounded-sm overflow-hidden border cursor-pointer ${
-                            selectedBlock.content.image === m.url
-                              ? 'border-[#9A3412] ring-1 ring-[#9A3412]'
-                              : 'border-[#E5DEC9]'
-                          }`}
-                        >
-                          <img src={m.url} alt={m.label} className="w-full h-10 object-cover" />
-                        </button>
-                      ))}
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-medium text-[#57534E] mb-1">Texte alternatif (alt)</label>
-                      <input
-                        type="text"
-                        value={selectedBlock.content.imageAlt || ''}
-                        onChange={(e) => updateContent({ imageAlt: e.target.value })}
-                        className="w-full px-2.5 py-1.5 text-xs bg-[#FFFFFF] border border-[#E5DEC9] rounded-sm"
+                  <div className="space-y-3 pt-2 border-t border-[#E5DEC9]">
+                    <MediaPicker
+                      label="Image du bloc"
+                      value={selectedBlock.content.image}
+                      alt={selectedBlock.content.imageAlt || ''}
+                      credit={selectedBlock.content.imageCredit}
+                      suggestedQuery={selectedBlock.content.heading}
+                      onChange={(patch) =>
+                        updateContent({
+                          image: patch.image,
+                          ...(patch.imageAlt !== undefined ? { imageAlt: patch.imageAlt } : {}),
+                          ...(patch.imageCredit !== undefined ? { imageCredit: patch.imageCredit } : {}),
+                        })
+                      }
+                    />
+                    <ImageEffectControls
+                      idPrefix={`fx-${selectedBlock.id}`}
+                      value={selectedBlock.content.imageEffect ?? DEFAULT_IMAGE_EFFECT}
+                      hasSecondaryImage={Boolean(selectedBlock.content.secondaryImage)}
+                      onChange={(effect) => updateContent({ imageEffect: effect })}
+                    />
+                    {selectedBlock.content.imageEffect?.effect3d === 'before-after-slider' && (
+                      <MediaPicker
+                        label="Seconde image (après)"
+                        value={selectedBlock.content.secondaryImage ?? ''}
+                        alt={selectedBlock.content.secondaryImageAlt || ''}
+                        credit={selectedBlock.content.secondaryImageCredit}
+                        suggestedQuery={selectedBlock.content.heading}
+                        onChange={(patch) =>
+                          updateContent({
+                            secondaryImage: patch.image,
+                            ...(patch.imageAlt !== undefined ? { secondaryImageAlt: patch.imageAlt } : {}),
+                            ...(patch.imageCredit !== undefined ? { secondaryImageCredit: patch.imageCredit } : {}),
+                          })
+                        }
                       />
-                    </div>
+                    )}
                   </div>
                 )}
 
-                {/* Inline Gemini Illustration Generator */}
-                {illustrationTarget && (
-                  <div className="bg-[#F4EFE6] border border-[#9A3412]/40 rounded-sm p-3 space-y-2">
-                    <div className="text-xs font-semibold text-[#1C1917]">Générer une illustration vectorielle</div>
-                    <input
-                      type="text"
-                      value={illustrationPrompt}
-                      onChange={(e) => setIllustrationPrompt(e.target.value)}
-                      placeholder="Ex. : façade architecturale minimaliste..."
-                      className="w-full px-2.5 py-1.5 text-xs bg-[#FFFFFF] border border-[#E5DEC9] rounded-sm"
+                {/* Animation d'apparition de la section */}
+                {selectedBlock.type !== 'navbar' && (
+                  <div className="space-y-2.5 pt-2 border-t border-[#E5DEC9]">
+                    <div className="text-xs font-semibold text-[#1C1917]">Animation de la section</div>
+                    <AnimationControls
+                      animation={selectedBlock.animation}
+                      durationMs={selectedBlock.animationDurationMs}
+                      onChange={(patch) => onUpdateBlock({ ...selectedBlock, ...patch })}
+                      onReplay={() => {
+                        const el = document.querySelector(`[data-block-id="${selectedBlock.id}"] [data-anim], [data-block-id="${selectedBlock.id}"][data-anim]`);
+                        (window as unknown as { __sfFxReplay?: (el: Element | null) => void }).__sfFxReplay?.(el);
+                      }}
                     />
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={handleGenerateIllustration}
-                        disabled={illustrationLoading}
-                        className="flex-1 py-1.5 px-3 rounded-sm bg-[#9A3412] text-white text-xs font-semibold cursor-pointer"
-                      >
-                        {illustrationLoading ? 'Création...' : 'Créer l’image'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setIllustrationTarget(null)}
-                        className="py-1.5 px-3 rounded-sm border border-[#E5DEC9] bg-[#FFFFFF] text-xs cursor-pointer"
-                      >
-                        Annuler
-                      </button>
-                    </div>
                   </div>
                 )}
 
@@ -881,24 +817,32 @@ export function InspectorPanel({
                             />
                           )}
                           {it.image !== undefined && (
-                            <div className="flex items-center gap-2">
-                              <label className="flex-1 py-1.5 px-2 rounded-sm border border-[#E5DEC9] bg-[#FBF8F3] text-[11px] text-center cursor-pointer">
-                                Changer photo
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  onChange={(e) => handleFileImage(e, it.id)}
-                                  className="sr-only"
+                            <details className="rounded-sm border border-[#E5DEC9] bg-[#FBF8F3]">
+                              <summary className="px-2 py-1.5 text-[11px] font-medium cursor-pointer select-none">
+                                {it.image ? 'Photo et effets' : 'Ajouter une photo'}
+                              </summary>
+                              <div className="p-2 space-y-3 border-t border-[#E5DEC9]">
+                                <MediaPicker
+                                  label="Photo de l’élément"
+                                  value={it.image}
+                                  alt={it.imageAlt || ''}
+                                  credit={it.imageCredit}
+                                  suggestedQuery={it.title}
+                                  onChange={(patch) =>
+                                    updateItem(it.id, {
+                                      image: patch.image,
+                                      ...(patch.imageAlt !== undefined ? { imageAlt: patch.imageAlt } : {}),
+                                      ...(patch.imageCredit !== undefined ? { imageCredit: patch.imageCredit } : {}),
+                                    })
+                                  }
                                 />
-                              </label>
-                              <button
-                                type="button"
-                                onClick={() => setIllustrationTarget({ itemId: it.id })}
-                                className="flex-1 py-1.5 px-2 rounded-sm border border-[#E5DEC9] bg-[#FBF8F3] text-[11px] cursor-pointer"
-                              >
-                                Illustration IA
-                              </button>
-                            </div>
+                                <ImageEffectControls
+                                  idPrefix={`fx-${it.id}`}
+                                  value={it.imageEffect ?? DEFAULT_IMAGE_EFFECT}
+                                  onChange={(effect) => updateItem(it.id, { imageEffect: effect })}
+                                />
+                              </div>
+                            </details>
                           )}
                         </div>
                       ))}
@@ -1156,67 +1100,14 @@ export function InspectorPanel({
               )}
             </div>
 
-            {/* Manual Colors */}
-            <div className="space-y-2">
-              <span className="block text-xs font-semibold text-[#1C1917]">Couleurs personnalisées</span>
-              <div className="grid grid-cols-2 gap-2">
-                {(
-                  [
-                    ['primary', 'Accent'],
-                    ['secondary', 'Secondaire'],
-                    ['background', 'Fond'],
-                    ['surface', 'Surface'],
-                    ['text', 'Encre'],
-                  ] as const
-                ).map(([key, label]) => (
-                  <label
-                    key={key}
-                    className="flex items-center justify-between p-2 rounded-sm border border-[#E5DEC9] bg-[#FFFFFF] text-xs"
-                  >
-                    <span>{label}</span>
-                    <input
-                      type="color"
-                      value={project.theme.palette[key]}
-                      onChange={(e) =>
-                        onUpdateProject({
-                          ...project,
-                          theme: {
-                            ...project.theme,
-                            palette: { ...project.theme.palette, [key]: e.target.value },
-                          },
-                        })
-                      }
-                      className="w-6 h-6 rounded-sm border-0 cursor-pointer"
-                    />
-                  </label>
-                ))}
-              </div>
-            </div>
+            <LayoutControls theme={project.theme} onChange={(theme) => onUpdateProject({ ...project, theme })} />
 
-            {/* Typography */}
-            <div className="space-y-2">
-              <label htmlFor="font-duo-select" className="block text-xs font-semibold text-[#1C1917]">
-                Duo de polices (Google Fonts)
-              </label>
-              <select
-                id="font-duo-select"
-                value={`${project.theme.fonts.heading}|${project.theme.fonts.body}`}
-                onChange={(e) => {
-                  const [heading, body] = e.target.value.split('|');
-                  onUpdateProject({
-                    ...project,
-                    theme: { ...project.theme, fonts: { name: `${heading} & ${body}`, heading, body } },
-                  });
-                }}
-                className="w-full px-3 py-2 text-xs border border-[#E5DEC9] rounded-sm bg-[#FFFFFF]"
-              >
-                {CURATED_FONT_PAIRINGS.map((fp) => (
-                  <option key={fp.id} value={`${fp.heading}|${fp.body}`}>
-                    {fp.name} — {fp.description}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <ColorEditor theme={project.theme} onChange={(theme) => onUpdateProject({ ...project, theme })} />
+
+            <FontSelector
+              fonts={project.theme.fonts}
+              onChange={(fonts) => onUpdateProject({ ...project, theme: { ...project.theme, fonts } })}
+            />
 
             {/* Radius & Spacing */}
             <div className="grid grid-cols-2 gap-3">
