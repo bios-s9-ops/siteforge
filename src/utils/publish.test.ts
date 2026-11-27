@@ -215,8 +215,10 @@ test('exécution : le menu mobile s’ouvre et se ferme', async (t) => {
   if (!jsdom) return t.skip('jsdom non installé');
   const dom = new jsdom.JSDOM(generateStandaloneHtml(makeProject()), { runScripts: 'dangerously', url: 'https://example.test/' });
   const { document } = dom.window;
+  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
   const toggle = document.querySelector('[data-nav-toggle]') as HTMLButtonElement;
-  const panel = document.getElementById('sf-nav-panel')!;
+  const panel = document.getElementById(toggle.getAttribute('aria-controls')!);
+  assert.ok(panel, 'le menu ciblé par le bouton existe');
   assert.equal(toggle.getAttribute('aria-expanded'), 'false');
   toggle.click();
   assert.equal(toggle.getAttribute('aria-expanded'), 'true');
