@@ -6,12 +6,16 @@ import {
   diversifyChoices,
   buildMutationSnapshot,
   fillImageSlots,
+  generateOriginalSite,
   generateSiteProposals,
   isClicheNeonColor,
+  mutateSiteWithAI,
   sanitizeProposalPalette,
 } from './geminiService';
 import { contrastRatio } from '../src/utils/colorHarmony';
 import { createStarterProject } from '../src/utils/demoSites';
+import { createBlankProject } from '../src/utils/projectIO';
+import type { LLMClient } from './llm';
 
 const noSleep = async () => {};
 const jsonRes = (status: number, body: unknown, headers: Record<string, string> = {}) =>
@@ -73,6 +77,105 @@ test('sans clé Groq ni Gemini : message clair', async () => {
   delete process.env.GROQ_API_KEY;
   delete process.env.GEMINI_API_KEY;
   await assert.rejects(createLLM().models.generateContent({ contents: 'x' }), (e: { code?: string }) => e.code === 'API_KEY_MISSING');
+});
+
+test('la génération simple produit des pages distinctes, des emplacements photo et signale un audit indisponible', async () => {
+  const generated = {
+    seoTitle: 'Atelier',
+    seoDescription: 'Objets cousus main',
+    artDirection: 'artisanal',
+    blocks: [
+      { type: 'navbar', variant: 'inline', content: { brandName: 'Atelier' } },
+      { type: 'hero', variant: 'split', content: { heading: 'Pièces cousues main' }, imageSlots: [{ target: 'content', query: 'atelier couture' }] },
+      { type: 'footer', variant: 'multi-column', content: { brandName: 'Atelier' } },
+    ],
+    pages: [
+      { title: 'Accueil', slug: 'accueil', blocks: [
+        { type: 'navbar', variant: 'inline', content: {} },
+        { type: 'hero', variant: 'split', content: { heading: 'Pièces cousues main' }, imageSlots: [{ target: 'content', query: 'atelier couture' }] },
+        { type: 'footer', variant: 'multi-column', content: {} },
+      ] },
+      { title: 'Filles', slug: 'filles', blocks: [
+        { type: 'navbar', variant: 'inline', content: {} },
+        { type: 'products', variant: 'cards', content: { heading: 'Pour les filles', items: [{ title: 'Robe' }] }, imageSlots: [{ target: 'item', itemIndex: 0, query: 'robe enfant' }] },
+        { type: 'footer', variant: 'multi-column', content: {} },
+      ] },
+    ],
+  };
+  const promptParts: string[] = [];
+  const llm = {
+    models: {
+      generateContent: async (request: { contents: string }) => {
+        promptParts.push(request.contents);
+        if (promptParts.length === 1) return { text: JSON.stringify(generated) };
+        throw new Error('audit unavailable');
+      },
+    },
+  } as unknown as LLMClient;
+  const result = await generateOriginalSite({
+    mode: 'ai',
+    siteName: 'Atelier',
+    activity: 'Boutique de vêtements cousus main',
+    description: 'Une boutique avec les catégories Accueil et Filles',
+    mustHave: 'Accueil, Filles, robe enfant',
+    mood: 'expressif',
+    targetAudience: 'Familles',
+    goal: 'Présenter la collection',
+  }, undefined, { llm, search: async () => [] });
+
+  assert.equal(result.project.pages?.length, 2);
+  assert.equal(result.project.activePageId, result.project.pages?.[0].id);
+  assert.equal(result.project.blocks[0].content.items?.[0].linkHref, '#page-accueil');
+  assert.equal(result.project.blocks[0].content.items?.[1].linkHref, '#page-filles');
+  assert.equal(result.project.pages?.[1].blocks.find((block) => block.type === 'products')?.content.items?.[0].image, '');
+  assert.match(promptParts[0], /Éléments indispensables : Accueil, Filles, robe enfant/);
+  assert.match(promptParts[0], /direction expressive/);
+  assert.equal(result.originalityReport.checked, false);
+  assert.match(result.originalityReport.summary, /n’a pas pu être terminé/);
+
+  const minimalPrompt: string[] = [];
+  const minimalLlm = {
+    models: {
+      generateContent: async (request: { contents: string }) => {
+        minimalPrompt.push(request.contents);
+        return {
+          text: minimalPrompt.length === 1
+            ? JSON.stringify({ ...generated, pages: undefined })
+            : JSON.stringify({ status: 'original', summary: 'Vérifié', adjustments: [], replacements: [] }),
+        };
+      },
+    },
+  } as unknown as LLMClient;
+  await generateOriginalSite({
+    mode: 'ai',
+    siteName: 'Atelier',
+    activity: 'Boutique',
+    mood: 'minimaliste',
+    targetAudience: '',
+    goal: '',
+  }, undefined, { llm: minimalLlm, search: async () => [] });
+  assert.match(minimalPrompt[0], /Le brief demande explicitement une esthétique minimaliste/);
+});
+
+test('les mutations du copilote utilisent le même identifiant de page de repli que le projet vierge', async () => {
+  const project = createBlankProject();
+  const snapshot = buildMutationSnapshot(project);
+  const pageId = `${project.id}-home`;
+  assert.equal(snapshot.pages[0].id, pageId);
+  const llm = {
+    models: {
+      generateContent: async () => ({
+        text: JSON.stringify({
+          assistantMessage: 'Une section a été ajoutée.',
+          mutations: [{ type: 'ADD_BLOCK', pageId, block: { type: 'cta', variant: 'banner', content: { heading: 'Découvrir' } } }],
+        }),
+      }),
+    },
+  } as unknown as LLMClient;
+  const result = await mutateSiteWithAI({ userPrompt: 'Ajoute un appel à action', projectSnapshot: project }, { llm });
+  assert.equal(result.mutations.length, 1);
+  assert.equal(result.mutations[0].type, 'ADD_BLOCK');
+  if (result.mutations[0].type === 'ADD_BLOCK') assert.equal(result.mutations[0].pageId, pageId);
 });
 
 test('recherche d’images libres : normalisation, licences, sources en panne', async () => {

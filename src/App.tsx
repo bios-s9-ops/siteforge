@@ -30,7 +30,10 @@ export default function App() {
   const [importError, setImportError] = useState('');
   const history = useProjectHistory(() => loadSavedProjects()[0] ?? createStarterProject('kora'));
   const [aiOpen, setAiOpen] = useState(false);
-  const aiUndoStack = useRef<SiteProject[]>([]);
+  const [aiTargetProject, setAiTargetProject] = useState<SiteProject | null>(null);
+  const [blankDraft] = useState(() => createBlankProject());
+  const aiTargetChangeRef = useRef<((project: SiteProject) => void) | null>(null);
+  const aiUndoStack = useRef<Array<{ project: SiteProject; onChange: ((project: SiteProject) => void) | null }>>([]);
   useHistoryShortcuts(screen === 'editor', history.undo, history.redo);
 
   // Réinitialise le défilement de la fenêtre lors des changements d'écran
@@ -49,6 +52,9 @@ export default function App() {
   }, [history.present, screen]);
 
   const openProjectInEditor = (project: SiteProject) => {
+    setAiTargetProject(null);
+    aiTargetChangeRef.current = null;
+    aiUndoStack.current = [];
     history.reset(normalizeProjectPages(project));
     setScreen('editor');
   };
@@ -62,18 +68,51 @@ export default function App() {
   };
 
   const handleAiChange = (_prompt: string, mutations: Parameters<typeof applySiteMutations>[1]) => {
-    aiUndoStack.current.push(history.present);
-    history.push(applySiteMutations(history.present, mutations));
-    setScreen('editor');
+    const target = aiTargetProject ?? (screen === 'editor' ? history.present : blankDraft);
+    aiUndoStack.current.push({ project: target, onChange: aiTargetChangeRef.current });
+    const updated = applySiteMutations(target, mutations);
+    if (aiTargetProject) {
+      setAiTargetProject(updated);
+      aiTargetChangeRef.current?.(updated);
+    } else if (screen === 'editor') {
+      history.push(updated);
+    } else {
+      const ready = normalizeProjectPages(updated);
+      const nextList = upsertProjectInList(savedProjects, ready);
+      setSavedProjects(nextList);
+      saveAllProjects(nextList);
+      history.reset(ready);
+      setScreen('editor');
+    }
   };
 
   const handleAiUndo = () => {
     const previous = aiUndoStack.current.pop();
-    if (previous) history.push(previous);
+    if (!previous) return;
+    if (previous.onChange) {
+      setAiTargetProject(previous.project);
+      previous.onChange(previous.project);
+    } else {
+      history.push(previous.project);
+    }
   };
 
   useEffect(() => {
-    const open = () => setAiOpen(true);
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        project?: SiteProject;
+        onProjectChange?: (project: SiteProject) => void;
+      }>).detail;
+      aiUndoStack.current = [];
+      if (detail?.project) {
+        setAiTargetProject(detail.project);
+        aiTargetChangeRef.current = detail.onProjectChange ?? null;
+      } else {
+        setAiTargetProject(null);
+        aiTargetChangeRef.current = null;
+      }
+      setAiOpen(true);
+    };
     window.addEventListener('siteforge:open-ai', open);
     return () => window.removeEventListener('siteforge:open-ai', open);
   }, []);
@@ -180,8 +219,15 @@ export default function App() {
       {content}
       <AICopilotDrawer
         isOpen={aiOpen}
-        onOpenChange={setAiOpen}
-        project={history.present}
+        onOpenChange={(open) => {
+          if (open) {
+            aiUndoStack.current = [];
+            setAiTargetProject(null);
+            aiTargetChangeRef.current = null;
+          }
+          setAiOpen(open);
+        }}
+        project={aiTargetProject ?? (screen === 'editor' ? history.present : blankDraft)}
         onApply={handleAiChange}
         onUndo={handleAiUndo}
         canUndo={aiUndoStack.current.length > 0}

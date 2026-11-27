@@ -8,6 +8,7 @@ interface LivePreviewModalProps {
   isOpen: boolean;
   project: SiteProject;
   onClose: () => void;
+  onProjectChange?: (project: SiteProject) => void;
 }
 
 const WIDTHS: Record<ViewportMode, string> = {
@@ -20,7 +21,7 @@ const WIDTHS: Record<ViewportMode, string> = {
  * Affiche exactement le HTML qui sera exporté : navigation, menu mobile, liens et formulaires fonctionnent.
  * Par défaut, les formulaires sont en mode test : ils montrent ce qui serait envoyé, sans rien transmettre.
  */
-export function LivePreviewModal({ isOpen, project, onClose }: LivePreviewModalProps) {
+export function LivePreviewModal({ isOpen, project, onClose, onProjectChange }: LivePreviewModalProps) {
   const [viewport, setViewport] = useState<ViewportMode>('desktop');
   const [realSend, setRealSend] = useState(false);
   const [html, setHtml] = useState('');
@@ -98,7 +99,11 @@ export function LivePreviewModal({ isOpen, project, onClose }: LivePreviewModalP
           </div>
 
           <div className="flex items-center gap-1">
-            <button type="button" onClick={() => window.dispatchEvent(new Event('siteforge:open-ai'))} className="flex items-center gap-1.5 rounded-sm border border-[#E5DEC9] px-3 py-2 text-xs font-semibold hover:bg-[#F4EFE6]">
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent('siteforge:open-ai', { detail: { project, onProjectChange } }))}
+              className="flex items-center gap-1.5 rounded-sm border border-[#E5DEC9] px-3 py-2 text-xs font-semibold hover:bg-[#F4EFE6]"
+            >
               <Sparkles className="h-4 w-4" aria-hidden="true" /> Modifier avec l’IA
             </button>
             <button

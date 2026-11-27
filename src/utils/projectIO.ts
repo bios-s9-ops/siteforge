@@ -66,17 +66,19 @@ export function switchProjectPage(project: SiteProject, pageId: string): SitePro
 
 /** Vide tous les emplacements d'image (blocs et éléments) en gardant les effets déjà réglés. */
 export function clearAllImages(project: SiteProject): SiteProject {
+  const clearBlocks = (blocks: SiteBlock[]) => blocks.map((b) => ({
+    ...b,
+    content: {
+      ...b.content,
+      ...(b.content.image !== undefined ? { image: '', imageCredit: '' } : {}),
+      ...(b.content.secondaryImage !== undefined ? { secondaryImage: '', secondaryImageCredit: '' } : {}),
+      items: b.content.items?.map((it) => ({ ...it, ...(it.image !== undefined ? { image: '', imageCredit: '' } : {}) })),
+    },
+  }));
   return {
     ...project,
-    blocks: project.blocks.map((b) => ({
-      ...b,
-      content: {
-        ...b.content,
-        ...(b.content.image !== undefined ? { image: '', imageCredit: '' } : {}),
-        ...(b.content.secondaryImage !== undefined ? { secondaryImage: '', secondaryImageCredit: '' } : {}),
-        items: b.content.items?.map((it) => ({ ...it, ...(it.image !== undefined ? { image: '', imageCredit: '' } : {}) })),
-      },
-    })),
+    blocks: clearBlocks(project.blocks),
+    ...(project.pages ? { pages: project.pages.map((page) => ({ ...page, blocks: clearBlocks(page.blocks) })) } : {}),
   };
 }
 

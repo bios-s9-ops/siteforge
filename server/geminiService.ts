@@ -10,6 +10,7 @@ import type {
   ProjectInput,
   RealFactsInput,
   SiteBlock,
+  SitePage,
   SiteProject,
   SiteMutation,
   StructureAnalysis,
@@ -40,7 +41,7 @@ import { ensureContrast, hexToHsl, normalizeHex } from '../src/utils/colorHarmon
 import { FONT_CATALOG, findFont } from '../src/utils/fonts';
 import { formatImageCredit } from '../src/utils/credits';
 import { searchRoyaltyFreeImages } from './stockImageService';
-import { applyInspirationEffects, clearAllImages } from '../src/utils/projectIO';
+import { applyInspirationEffects, clearAllImages, normalizeProjectPages } from '../src/utils/projectIO';
 import { DEFAULT_NAVBAR_CONFIG, serializeSafeBlockCss } from '../src/utils/siteSettings';
 import type {
   ImageEffectConfig,
@@ -318,6 +319,75 @@ RÈGLE ANTI-PLAGIAT ET HONNÊTETÉ ABSOLUE :
   return JSON.parse(structuredRes.text ?? '{}') as StructureAnalysis;
 }
 
+const GENERATED_BLOCK_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    type: {
+      type: Type.STRING,
+      description: 'navbar, hero, about, services, gallery, products, pricing, testimonials, faq, stats, team, logos, cta, contact, footer',
+    },
+    variant: { type: Type.STRING },
+    animation: { type: Type.STRING, description: SECTION_ANIMATION_IDS.join(', ') },
+    animationDurationMs: { type: Type.NUMBER },
+    imageSlots: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          target: { type: Type.STRING, description: 'content ou item' },
+          itemIndex: { type: Type.NUMBER },
+          query: { type: Type.STRING, description: 'Recherche photo concrète libre de droits, 2 à 5 mots.' },
+          alt: { type: Type.STRING },
+          scroll: { type: Type.STRING, description: IMAGE_SCROLL_EFFECT_IDS.join(', ') },
+          scrollIntensity: { type: Type.NUMBER },
+          effect3d: { type: Type.STRING, description: IMAGE_3D_EFFECT_IDS.join(', ') },
+          effect3dIntensity: { type: Type.NUMBER },
+        },
+        required: ['target', 'query'],
+      },
+    },
+    content: {
+      type: Type.OBJECT,
+      properties: {
+        brandName: { type: Type.STRING },
+        kicker: { type: Type.STRING },
+        heading: { type: Type.STRING },
+        subheading: { type: Type.STRING },
+        body: { type: Type.STRING },
+        ctaLabel: { type: Type.STRING },
+        ctaHref: { type: Type.STRING },
+        secondaryCtaLabel: { type: Type.STRING },
+        secondaryCtaHref: { type: Type.STRING },
+        imageAlt: { type: Type.STRING },
+        email: { type: Type.STRING },
+        phone: { type: Type.STRING },
+        address: { type: Type.STRING },
+        copyright: { type: Type.STRING },
+        items: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              subtitle: { type: Type.STRING },
+              description: { type: Type.STRING },
+              price: { type: Type.STRING },
+              meta: { type: Type.STRING },
+              imageAlt: { type: Type.STRING },
+              linkLabel: { type: Type.STRING },
+              linkHref: { type: Type.STRING },
+              highlighted: { type: Type.BOOLEAN },
+              features: { type: Type.ARRAY, items: { type: Type.STRING } },
+            },
+            required: ['title'],
+          },
+        },
+      },
+    },
+  },
+  required: ['type', 'variant', 'content'],
+};
+
 const GENERATED_SITE_SCHEMA = {
   type: Type.OBJECT,
   properties: {
@@ -328,59 +398,18 @@ const GENERATED_SITE_SCHEMA = {
       description:
         'Une parmi: editorial, artisanal, minimal_luxe, brutaliste_doux, vibrant, nature, retro_imprime, technique_sobre',
     },
-    blocks: {
+    blocks: { type: Type.ARRAY, items: GENERATED_BLOCK_SCHEMA },
+    pages: {
       type: Type.ARRAY,
+      description: 'Pages distinctes lorsque le brief demande explicitement plusieurs pages ou catégories.',
       items: {
         type: Type.OBJECT,
         properties: {
-          type: {
-            type: Type.STRING,
-            description:
-              'navbar, hero, about, services, gallery, products, pricing, testimonials, faq, stats, team, logos, cta, contact, footer',
-          },
-          variant: { type: Type.STRING },
-          animation: { type: Type.STRING, description: SECTION_ANIMATION_IDS.join(', ') },
-          animationDurationMs: { type: Type.NUMBER },
-          content: {
-            type: Type.OBJECT,
-            properties: {
-              brandName: { type: Type.STRING },
-              kicker: { type: Type.STRING },
-              heading: { type: Type.STRING },
-              subheading: { type: Type.STRING },
-              body: { type: Type.STRING },
-              ctaLabel: { type: Type.STRING },
-              ctaHref: { type: Type.STRING },
-              secondaryCtaLabel: { type: Type.STRING },
-              secondaryCtaHref: { type: Type.STRING },
-              imageAlt: { type: Type.STRING },
-              email: { type: Type.STRING },
-              phone: { type: Type.STRING },
-              address: { type: Type.STRING },
-              copyright: { type: Type.STRING },
-              items: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    title: { type: Type.STRING },
-                    subtitle: { type: Type.STRING },
-                    description: { type: Type.STRING },
-                    price: { type: Type.STRING },
-                    meta: { type: Type.STRING },
-                    imageAlt: { type: Type.STRING },
-                    linkLabel: { type: Type.STRING },
-                    linkHref: { type: Type.STRING },
-                    highlighted: { type: Type.BOOLEAN },
-                    features: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  },
-                  required: ['title'],
-                },
-              },
-            },
-          },
+          title: { type: Type.STRING },
+          slug: { type: Type.STRING },
+          blocks: { type: Type.ARRAY, items: GENERATED_BLOCK_SCHEMA },
         },
-        required: ['type', 'variant', 'content'],
+        required: ['title', 'slug', 'blocks'],
       },
     },
   },
@@ -574,13 +603,22 @@ RÈGLES ABSOLUES D'HONNÊTETÉ FACTUELLE :
 2. Si l'utilisateur n'a pas fourni de faits réels pour Témoignages, Statistiques, Équipe ou Logos, N'INCLUS PAS ces blocs.
 3. Si l'utilisateur n'a pas fourni ses coordonnées pour Contact ou ses tarifs pour Tarifs/Produits, mets exactement la valeur "À compléter" dans ces champs.
 4. TON HUMAIN ET CONCRET : phrases courtes, précises, vocabulaire propre au métier. Aucune formule creuse ("Révolutionnez", "Libérez le potentiel", "Solution tout-en-un", "Découvrez", "Propulsez"). Aucun emoji utilisé comme icône.
-5. Réponds uniquement en JSON conforme au schéma sans HTML brut.`;
+5. CRÉATIVITÉ PAR DÉFAUT : sauf demande explicite de minimalisme, propose une direction visuelle expressive, singulière et adaptée au métier. Varie les compositions, les contrastes, la hiérarchie typographique, les couleurs et les rythmes; évite les pages génériques, uniformes ou systématiquement minimalistes. Le minimalisme n'est pas le choix par défaut.
+6. Réponds uniquement en JSON conforme au schéma sans HTML brut.`;
+
+function creativeDirectionGuidance(brief: string): string {
+  const explicitlyMinimal = /\b(minimal(?:e|iste|isme)?|minimalist(?:e)?|épur(?:é|ée|er|é)?|très simple)\b/i.test(brief);
+  return explicitlyMinimal
+    ? 'Le brief demande explicitement une esthétique minimaliste : privilégie la retenue, l’espace et peu d’accents sans sacrifier la personnalité.'
+    : 'Aucune demande explicite de minimalisme : ose une direction expressive, une composition signature et des choix visuels mémorables, tout en restant lisible et crédible.';
+}
 
 export async function generateOriginalSite(
   projectInput: ProjectInput,
   structureAnalysis?: StructureAnalysis,
+  deps: { llm?: LLMClient; search?: StockSearchFn } = {},
 ): Promise<{ project: SiteProject; originalityReport: OriginalityReport }> {
-  const ai = getClient();
+  const ai = deps.llm ?? getClient();
   const realFacts = projectInput.realFacts;
 
   const catalogGuide = BLOCK_CATALOG.map(
@@ -614,10 +652,17 @@ export async function generateOriginalSite(
 - Direction artistique privilégiée : ${directionChoice}
 - Public cible : ${projectInput.targetAudience || 'Grand public et clients locaux'}
 - Objectif principal : ${projectInput.goal}
+- Description complémentaire du brief : ${projectInput.description || 'Aucune'}
+- Éléments indispensables : ${projectInput.mustHave || 'Aucun précisé'}
 
 ${realFactsSummary}
 
 ${structurePrompt}
+
+${creativeDirectionGuidance(`${projectInput.mood} ${projectInput.description ?? ''} ${projectInput.mustHave ?? ''}`)}
+Si le brief demande plusieurs catégories, pages ou rubriques de navigation, crée une page distincte par catégorie dans "pages", avec ses propres blocs. Sinon, laisse "pages" vide.
+Pour chaque bloc hero/about/gallery/products visuel, renseigne imageSlots avec une requête photo précise de 2 à 5 mots; n'invente aucune URL d'image.
+Pour une boutique, un portfolio ou une vitrine de créations, ne génère pas de formulaire de devis/contact commercial sauf demande explicite : privilégie des liens d'action directs (catalogue, WhatsApp, Instagram) et n'invente pas leurs coordonnées.
 
 Types de blocs et variantes autorisés (alterne les variantes pour éviter deux sections identiques d'affilée) :
 ${catalogGuide}
@@ -638,16 +683,68 @@ Règles de liens et de contact :
     },
   });
 
-  const parsed = JSON.parse(res.text ?? '{}');
-  const blocks = enforceHonestyOnBlocks(
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(res.text ?? '{}') as Record<string, unknown>;
+  } catch {
+    throw Object.assign(new Error('L’IA a renvoyé une réponse illisible.'), { status: 502, code: 'INVALID_JSON' });
+  }
+  if (!Array.isArray(parsed.blocks) || parsed.blocks.length === 0) {
+    throw Object.assign(new Error('L’IA n’a généré aucune section exploitable.'), { status: 502, code: 'INVALID_JSON' });
+  }
+  const realBlocks = enforceHonestyOnBlocks(
     Array.isArray(parsed.blocks) ? parsed.blocks : [],
     projectInput.siteName,
     realFacts,
-  );
+  ) as BlockWithSlots[];
+  const rawPages = Array.isArray(parsed.pages) ? parsed.pages.slice(0, 10) : [];
+  const usedPageSlugs = new Set<string>();
+  const pages = rawPages.map((value, index) => {
+    const rawPage = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+    const title = sanitizeForbiddenCopy(typeof rawPage.title === 'string' ? rawPage.title : `Page ${index + 1}`).slice(0, 80);
+    const baseSlug = (typeof rawPage.slug === 'string' ? rawPage.slug : title)
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 60) || `page-${index + 1}`;
+    let slug = baseSlug;
+    let suffix = 2;
+    while (usedPageSlugs.has(slug)) slug = `${baseSlug}-${suffix++}`;
+    usedPageSlugs.add(slug);
+    const pageBlocks = enforceHonestyOnBlocks(
+      Array.isArray(rawPage.blocks) ? rawPage.blocks as RawBlock[] : [],
+      projectInput.siteName,
+      realFacts,
+    ) as BlockWithSlots[];
+    if (!pageBlocks.length) pageBlocks.push(...realBlocks.map((block) => ({ ...block, content: { ...block.content } })));
+    if (pageBlocks[0]?.type !== 'navbar') pageBlocks.unshift(createBlockInstance('navbar', projectInput.siteName) as BlockWithSlots);
+    if (pageBlocks.at(-1)?.type !== 'footer') pageBlocks.push(createBlockInstance('footer', projectInput.siteName) as BlockWithSlots);
+    return { id: `page_${slug}`, title, slug, blocks: pageBlocks };
+  });
+  let blocks = pages[0]?.blocks ?? realBlocks;
+  if (blocks[0]?.type !== 'navbar') blocks.unshift(createBlockInstance('navbar', projectInput.siteName) as BlockWithSlots);
+  if (blocks.at(-1)?.type !== 'footer') blocks.push(createBlockInstance('footer', projectInput.siteName) as BlockWithSlots);
+  if (pages.length) {
+    const navigationItems = pages.map((page) => ({
+      id: createBlockId('it'),
+      title: page.title,
+      linkHref: `#page-${page.slug}`,
+    }));
+    for (const page of pages) {
+      const navbar = page.blocks.find((block) => block.type === 'navbar');
+      if (navbar) navbar.content.items = navigationItems;
+    }
+    blocks = pages[0].blocks;
+    await fillImageSlots(pages.flatMap((page) => page.blocks), deps.search);
+  } else {
+    await fillImageSlots(blocks, deps.search);
+  }
 
   const resolvedDirection = projectInput.artDirection
     ? projectInput.artDirection
-    : resolveArtDirectionId(parsed.artDirection, projectInput.mood);
+    : resolveArtDirectionId(typeof parsed.artDirection === 'string' ? parsed.artDirection : undefined, projectInput.mood);
   const theme = applyArtDirectionToTheme(resolvedDirection);
 
   // Étape 3 : Contrôle d'originalité et d'honnêteté automatique (conservé intact)
@@ -670,10 +767,9 @@ Vérifie deux points :
 Si besoin, fournis des textes de remplacement concrets et sobrement rédigés dans "replacements".`;
 
   let originalityReport: OriginalityReport = {
-    checked: true,
-    status: 'original',
-    summary:
-      'Contrôle d’originalité et d’honnêteté validé : contenu original, ton concret et direction artistique dédiée.',
+    checked: false,
+    status: 'not_applicable',
+    summary: 'Le contrôle d’originalité n’a pas pu être terminé; vérifiez le contenu avant publication.',
     adjustments: [],
     checkedAt: new Date().toISOString(),
   };
@@ -716,20 +812,30 @@ Si besoin, fournis des textes de remplacement concrets et sobrement rédigés da
       checkedAt: new Date().toISOString(),
     };
   } catch {
-    // Keep validated report on transient failure
+    originalityReport = {
+      ...originalityReport,
+      summary: 'Le contrôle d’originalité n’a pas pu être terminé; vérifiez le contenu avant publication.',
+    };
   }
 
   const now = new Date().toISOString();
   const project: SiteProject = {
     id: `prj_${Math.random().toString(36).slice(2, 9)}`,
     name: projectInput.siteName,
-    seoTitle: sanitizeForbiddenCopy(parsed.seoTitle || `${projectInput.siteName} — ${projectInput.activity}`),
+    seoTitle: sanitizeForbiddenCopy(
+      typeof parsed.seoTitle === 'string' && parsed.seoTitle.trim()
+        ? parsed.seoTitle
+        : `${projectInput.siteName} — ${projectInput.activity}`,
+    ),
     seoDescription: sanitizeForbiddenCopy(
-      parsed.seoDescription || `${projectInput.siteName} : ${projectInput.activity}.`,
+      typeof parsed.seoDescription === 'string' && parsed.seoDescription.trim()
+        ? parsed.seoDescription
+        : `${projectInput.siteName} : ${projectInput.activity}.`,
     ),
     isDemo: false,
     theme,
     blocks,
+    ...(pages.length ? { pages, activePageId: pages[0].id } : {}),
     originalityReport,
     structureAnalysis,
     projectInput,
@@ -1016,6 +1122,8 @@ export async function generateSiteProposals(
 - Éléments indispensables (sections, fonctions, contenus) : ${input.mustHave || 'Aucune exigence particulière.'}
 - Nom du site : ${input.siteName || 'à inventer sobrement à partir de la description'}
 
+${creativeDirectionGuidance(`${input.description} ${input.vision} ${input.mustHave}`)}
+
 RÈGLES
 1. Chaque proposition a sa propre architecture (layoutMode parmi : ${LAYOUT_MODE_IDS.join(', ')}), son propre style de navigation (headerStyle parmi : ${HEADER_STYLE_IDS.join(', ')}), sa propre palette de 6 couleurs hexadécimales (jamais de violet, rose ou cyan fluo ; texte très lisible sur le fond), ses propres polices Google Fonts (parmi : ${fontList}), des animations d'entrée par section (animation parmi : ${SECTION_ANIMATION_IDS.join(', ')}) et des effets d'image (scroll parmi : ${IMAGE_SCROLL_EFFECT_IDS.join(', ')} ; effect3d parmi : ${IMAGE_3D_EFFECT_IDS.join(', ')} ; intensités de 0 à 100) choisis selon la vision demandée.
 2. Les trois propositions doivent différer par layoutMode (trois valeurs distinctes), par headerStyle, par palette, par polices et par effets.
@@ -1024,6 +1132,7 @@ RÈGLES
 5. Si le brief demande explicitement plusieurs pages ou catégories, retourne une entrée distincte par page dans "pages", avec title, slug et ses propres blocs; sinon laisse "pages" vide. Les liens de navigation doivent pointer vers les pages distinctes.
 6. Aucun avis, chiffre, prix, nom de personne, adresse, téléphone ou e-mail inventé : écris « À compléter » pour les coordonnées et les prix.
 7. Liens (linkHref, ctaHref) uniquement vers des sections présentes (#accueil, #apropos, #services, #galerie, #produits, #tarifs, #faq, #contact).
+8. Pour une boutique, un portfolio ou une vitrine de créations, n'ajoute pas de formulaire de devis/contact commercial sauf demande explicite; privilégie les liens d'action directs demandés (catalogue, WhatsApp, Instagram) sans inventer de coordonnées.
 
 Types de blocs et variantes autorisés :
 ${catalogGuide}`;
@@ -1195,7 +1304,8 @@ function sanitizeMutationContent(raw: unknown): Record<string, unknown> {
 
 function sanitizeAIMutations(raw: unknown, project: SiteProject): SiteMutation[] {
   if (!Array.isArray(raw)) return [];
-  const pages = project.pages ?? [{ id: project.activePageId || 'home', title: 'Accueil', slug: 'accueil', blocks: project.blocks }];
+  const normalizedProject = normalizeProjectPages(project);
+  const pages = normalizedProject.pages ?? [];
   const mutations: SiteMutation[] = [];
   for (const value of raw.slice(0, 12)) {
     if (!value || typeof value !== 'object') continue;
@@ -1226,7 +1336,7 @@ function sanitizeAIMutations(raw: unknown, project: SiteProject): SiteMutation[]
       const blocks = Array.isArray(page.blocks) ? enforceHonestyOnBlocks(page.blocks.slice(0, 20) as RawBlock[], project.name) : [];
       mutations.push({ type: 'ADD_PAGE', page: { id: `page_${slug}`, title, slug, blocks } });
     } else if (item.type === 'ADD_BLOCK') {
-      const pageId = String(item.pageId ?? project.activePageId ?? pages[0].id);
+      const pageId = String(item.pageId ?? normalizedProject.activePageId ?? pages[0]?.id ?? '');
       if (!pages.some((page) => page.id === pageId) || !item.block || typeof item.block !== 'object') continue;
       const block = item.block as Record<string, unknown>;
       if (typeof block.type !== 'string' || !BLOCK_CATALOG.some((definition) => definition.type === block.type)) continue;
@@ -1237,7 +1347,7 @@ function sanitizeAIMutations(raw: unknown, project: SiteProject): SiteMutation[]
       }], project.name)[0];
       if (built) mutations.push({ type: 'ADD_BLOCK', pageId, index: Number.isFinite(Number(item.index)) ? Number(item.index) : undefined, block: built });
     } else if (item.type === 'UPDATE_BLOCK') {
-      const pageId = String(item.pageId ?? project.activePageId ?? '');
+      const pageId = String(item.pageId ?? normalizedProject.activePageId ?? '');
       const blockId = String(item.blockId ?? '');
       const page = pages.find((candidate) => candidate.id === pageId);
       if (!page?.blocks.some((block) => block.id === blockId) || !item.patch || typeof item.patch !== 'object') continue;
@@ -1249,7 +1359,7 @@ function sanitizeAIMutations(raw: unknown, project: SiteProject): SiteMutation[]
       if (typeof rawPatch.visible === 'boolean') patch.visible = rawPatch.visible;
       if (Object.keys(patch).length) mutations.push({ type: 'UPDATE_BLOCK', pageId, blockId, patch });
     } else if (item.type === 'DELETE_BLOCK') {
-      const pageId = String(item.pageId ?? project.activePageId ?? '');
+      const pageId = String(item.pageId ?? normalizedProject.activePageId ?? '');
       const blockId = String(item.blockId ?? '');
       if (pages.find((page) => page.id === pageId)?.blocks.some((block) => block.id === blockId)) {
         mutations.push({ type: 'DELETE_BLOCK', pageId, blockId });
@@ -1270,12 +1380,12 @@ export async function mutateSiteWithAI(input: {
   activePageId?: string;
   selectedBlockId?: string | null;
   projectSnapshot: SiteProject;
-}): Promise<AIMutateResponse> {
+}, deps: { llm?: LLMClient } = {}): Promise<AIMutateResponse> {
   const prompt = input.userPrompt.trim().slice(0, 2400);
   if (!prompt) throw Object.assign(new Error('Décrivez le changement souhaité.'), { status: 400 });
   const project = input.projectSnapshot;
   const snapshot = buildMutationSnapshot(project, input.activePageId, input.selectedBlockId);
-  const result = await getClient().models.generateContent({
+  const result = await (deps.llm ?? getClient()).models.generateContent({
     model: MODEL_NAME,
     contents: `Propose des mutations SiteForge pour cette demande utilisateur: ${prompt}\nProjet actuel (référence uniquement): ${JSON.stringify(snapshot).slice(0, 65000)}\nRetourne {assistantMessage:string,mutations:[{type,patch,pageId,blockId,index,page,block,target,css}]}. Types permis: UPDATE_NAVBAR, SET_GLOBAL_STYLE, ADD_PAGE, ADD_BLOCK, UPDATE_BLOCK, DELETE_BLOCK, APPLY_CUSTOM_CSS. Utilise des titres et textes concrets. N'invente jamais de prix, coordonnées, avis ou statistiques: garde "À compléter". Pour les mutations sur une page, réutilise son id. Pour les ajouts de blocs, utilise des types de bloc existants et des variantes valides.`,
     config: { responseMimeType: 'application/json', temperature: 0.3 },
@@ -1294,7 +1404,8 @@ export async function mutateSiteWithAI(input: {
 }
 
 export function buildMutationSnapshot(project: SiteProject, activePageId?: string, selectedBlockId?: string | null) {
-  const pages = project.pages ?? [{ id: project.activePageId || 'home', title: 'Accueil', slug: 'accueil', blocks: project.blocks }];
+  const normalizedProject = normalizeProjectPages(project);
+  const pages = normalizedProject.pages ?? [];
   const redactBlocks = (blocks: SiteBlock[]) => blocks.map((block) => {
     const content = { ...block.content };
     for (const key of [
@@ -1315,7 +1426,7 @@ export function buildMutationSnapshot(project: SiteProject, activePageId?: strin
     name: project.name,
     theme: { ...project.theme, customCss: undefined },
     navbar: project.settings?.navbar ?? DEFAULT_NAVBAR_CONFIG,
-    activePageId: activePageId ?? project.activePageId,
+    activePageId: activePageId ?? normalizedProject.activePageId,
     selectedBlockId,
     pages: pages
       .map((page) => ({ id: page.id, title: page.title, slug: page.slug, blocks: redactBlocks(page.blocks) }))
