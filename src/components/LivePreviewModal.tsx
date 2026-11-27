@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Info, Monitor, Smartphone, Tablet, X } from 'lucide-react';
+import { Info, Monitor, Smartphone, Sparkles, Tablet, X } from 'lucide-react';
 import type { SiteProject, ViewportMode } from '../types/site';
 import { generateStandaloneHtml, inlineLocalAssets } from '../utils/exporter';
 import { describeFormDelivery } from '../utils/forms';
@@ -24,12 +24,20 @@ export function LivePreviewModal({ isOpen, project, onClose }: LivePreviewModalP
   const [viewport, setViewport] = useState<ViewportMode>('desktop');
   const [realSend, setRealSend] = useState(false);
   const [html, setHtml] = useState('');
+  const [previewError, setPreviewError] = useState('');
 
   useEffect(() => {
     if (!isOpen) return;
     let cancelled = false;
+    setHtml('');
+    setPreviewError('');
     inlineLocalAssets(project).then((ready) => {
       if (!cancelled) setHtml(generateStandaloneHtml(ready, { dryRun: !realSend }));
+    }).catch((err: unknown) => {
+      if (!cancelled) {
+        console.error('Impossible de préparer l’aperçu du site.', err);
+        setPreviewError('Impossible de préparer l’aperçu. Vérifiez les images locales puis réessayez.');
+      }
     });
     return () => {
       cancelled = true;
@@ -89,14 +97,19 @@ export function LivePreviewModal({ isOpen, project, onClose }: LivePreviewModalP
             ))}
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Fermer le test"
-            className="p-2 rounded-sm text-[#57534E] hover:bg-[#F4EFE6] hover:text-[#1C1917] cursor-pointer"
-          >
-            <X className="w-5 h-5" aria-hidden="true" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button type="button" onClick={() => window.dispatchEvent(new Event('siteforge:open-ai'))} className="flex items-center gap-1.5 rounded-sm border border-[#E5DEC9] px-3 py-2 text-xs font-semibold hover:bg-[#F4EFE6]">
+              <Sparkles className="h-4 w-4" aria-hidden="true" /> Modifier avec l’IA
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Fermer le test"
+              className="p-2 rounded-sm text-[#57534E] hover:bg-[#F4EFE6] hover:text-[#1C1917] cursor-pointer"
+            >
+              <X className="w-5 h-5" aria-hidden="true" />
+            </button>
+          </div>
         </div>
 
         <div className="px-4 py-2.5 border-b border-[#E5DEC9] bg-[#F4EFE6] flex flex-wrap items-start gap-x-4 gap-y-2 text-xs text-[#1C1917]">
@@ -120,7 +133,9 @@ export function LivePreviewModal({ isOpen, project, onClose }: LivePreviewModalP
         </div>
 
         <div className="flex-1 overflow-auto bg-[#D6CEBA] p-3 flex justify-center">
-          {html ? (
+          {previewError ? (
+            <p className="text-sm text-red-800 self-center" role="alert">{previewError}</p>
+          ) : html ? (
             <iframe
               title="Aperçu interactif du site"
               srcDoc={html}

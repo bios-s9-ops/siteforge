@@ -6,7 +6,7 @@ export function AiNotice({ className = '' }: { className?: string }) {
     <p className={`flex items-start gap-1.5 text-[11px] leading-snug text-[#57534E] ${className}`} role="note">
       <Info className="w-3.5 h-3.5 shrink-0 mt-px" aria-hidden="true" />
       <span>
-        L’IA peut se tromper : relisez les textes, vérifiez les informations, les liens et les crédits des photos avant de publier.
+        Votre demande et les données nécessaires sont transmises au fournisseur IA configuré (Groq ou Google Gemini) pour générer le résultat. Évitez les données sensibles et vérifiez les conditions de ce fournisseur. L’IA peut se tromper : vérifiez textes, faits, liens et crédits avant publication.
       </span>
     </p>
   );

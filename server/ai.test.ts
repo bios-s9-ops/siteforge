@@ -4,12 +4,14 @@ import { cleanModelText, createLLM, extractJson, toJsonSchema } from './llm';
 import { isUsableLicense, normalizeOpenverse, normalizeWikimedia, searchRoyaltyFreeImages } from './stockImageService';
 import {
   diversifyChoices,
+  buildMutationSnapshot,
   fillImageSlots,
   generateSiteProposals,
   isClicheNeonColor,
   sanitizeProposalPalette,
 } from './geminiService';
 import { contrastRatio } from '../src/utils/colorHarmony';
+import { createStarterProject } from '../src/utils/demoSites';
 
 const noSleep = async () => {};
 const jsonRes = (status: number, body: unknown, headers: Record<string, string> = {}) =>
@@ -84,10 +86,12 @@ test('recherche d’images libres : normalisation, licences, sources en panne', 
       { id: 'a', title: 'Pain <b>doré</b>', url: 'https://x/a.jpg', thumbnail: 'https://x/a_t.jpg', creator: 'Awa', license: 'by', license_version: '4.0', foreign_landing_url: 'https://x/p' },
       { id: 'b', title: 'NC', url: 'https://x/b.jpg', license: 'by-nc', license_version: '2.0' },
       { id: 'c', title: 'javascript', url: 'javascript:alert(1)', license: 'cc0' },
+      { id: 'd', title: 'Vignette disponible', thumbnail: 'https://x/d_t.jpg', license: 'cc0' },
     ],
   });
-  assert.equal(ov.length, 1);
+  assert.equal(ov.length, 2);
   assert.deepEqual([ov[0].id, ov[0].title, ov[0].license, ov[0].source], ['openverse:a', 'Pain doré', 'CC BY 4.0', 'openverse']);
+  assert.equal(ov[1].url, 'https://x/d_t.jpg', 'la vignette reste exploitable si l’URL originale manque');
 
   const wm = normalizeWikimedia({
     query: { pages: { 1: { pageid: 1, title: 'File:Baguette.jpg', imageinfo: [{ url: 'https://c/full.jpg', thumburl: 'https://c/t.jpg', mime: 'image/jpeg', descriptionurl: 'https://c/page', extmetadata: { LicenseShortName: { value: 'CC BY-SA 3.0' }, Artist: { value: '<a href="#">Jean</a>' } } }] }, 2: { pageid: 2, title: 'File:x.svg', imageinfo: [{ url: 'https://c/x.svg', mime: 'image/svg+xml', extmetadata: { LicenseShortName: { value: 'CC0' } } }] } } },
@@ -114,6 +118,26 @@ test('palettes de l’IA : pas de néon violet ou rose, texte lisible', () => {
   assert.ok(contrastRatio(p.text, p.background) >= 4.5);
   assert.ok(contrastRatio(p.mutedText, p.background) >= 3.5);
   assert.deepEqual(diversifyChoices(['vertical', 'vertical', 'vertical'] as const as unknown as string[], ['vertical', 'split-screen', 'bento-grid']), ['vertical', 'split-screen', 'bento-grid']);
+});
+
+test('le contexte du copilote minimise les données personnelles et les photos envoyées au modèle', () => {
+  const project = createStarterProject('kora');
+  const contact = project.blocks.find((block) => block.type === 'contact');
+  assert.ok(contact);
+  contact.content.email = 'private@example.test';
+  contact.content.phone = '+33 6 12 34 56 78';
+  contact.content.address = '1 rue privée';
+  contact.content.image = 'data:image/png;base64,private-image';
+  contact.content.items = [{
+    id: 'private-item',
+    title: 'Contact',
+    image: 'data:image/png;base64,private-item-image',
+    linkHref: 'mailto:private@example.test',
+  }];
+  const snapshot = JSON.stringify(buildMutationSnapshot(project));
+  for (const privateValue of ['private@example.test', '+33 6 12 34 56 78', '1 rue privée', 'private-image']) {
+    assert.ok(!snapshot.includes(privateValue), `donnée privée exclue du contexte IA: ${privateValue}`);
+  }
 });
 
 const slotBlock = (slots: unknown) => ({ id: 'b1', type: 'hero', variant: 'split', visible: true, content: { heading: 'x', image: '' }, __slots: slots }) as never;

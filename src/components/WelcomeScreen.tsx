@@ -10,7 +10,7 @@ interface WelcomeScreenProps {
   savedProjects: SiteProject[];
   onStartMode: (mode: StartMode) => void;
   onOpenProject: (project: SiteProject) => void;
-  onOpenStarter: (preset: 'kora' | 'seve') => void;
+  onOpenStarter: (preset: 'kora' | 'seve' | 'apparel' | 'portfolio' | 'agency') => void;
   onDuplicateProject: (projectId: string) => void;
   onDeleteProject: (projectId: string) => void;
   onImportFile: (file: File) => void;
@@ -111,6 +111,13 @@ const SCENES = [
   { title: 'Des effets qui servent le contenu', text: 'Parallaxe, zoom, inclinaison 3D, avant / après. Chaque effet se règle, et se coupe, image par image.' },
 ];
 
+const STYLE_PREVIEWS = [
+  { id: 'glass', title: 'Liquid Glass', description: 'Verre dépoli et halos colorés', surface: 'rgba(255,255,255,.55)', text: '#1C1917', accent: '#6D5BD0', background: 'linear-gradient(135deg,#dbeafe,#fce7f3,#fff7ed)' },
+  { id: 'boutique', title: 'Modern Boutique', description: 'Luxe calme et tons naturels', surface: '#F6F0E7', text: '#292524', accent: '#8B5E3C', background: '#E8DED0' },
+  { id: 'editorial', title: 'Éditorial', description: 'Typographie forte et papier', surface: '#FAF8F4', text: '#171717', accent: '#7F1D1D', background: '#E7E1D8' },
+  { id: 'neon', title: 'Dark Neon', description: 'Contraste sombre et accents vifs', surface: '#171923', text: '#F8FAFC', accent: '#A78BFA', background: 'linear-gradient(135deg,#09090b,#312e81,#0f172a)' },
+];
+
 export function WelcomeScreen({
   savedProjects,
   onStartMode,
@@ -123,6 +130,8 @@ export function WelcomeScreen({
 }: WelcomeScreenProps) {
   const stageRef = useRef<HTMLDivElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
+  const [selectedStyle, setSelectedStyle] = useState(STYLE_PREVIEWS[0].id);
+  const previewStyle = STYLE_PREVIEWS.find((style) => style.id === selectedStyle) ?? STYLE_PREVIEWS[0];
   const p = useScrollProgress(stageRef);
   const reduce = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
@@ -189,6 +198,38 @@ export function WelcomeScreen({
             <span className="text-sm text-[#57534E]">Trois propositions différentes à partir de votre description.</span>
           </button>
         </div>
+        <div className="mt-10 max-w-4xl rounded-sm border border-[#E5DEC9] bg-white/70 p-4">
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <h2 className="font-display text-xl font-semibold">Choisissez une ambiance</h2>
+              <p className="text-sm text-[#57534E]">Aperçu instantané des directions que vous pourrez appliquer dans l’éditeur.</p>
+            </div>
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Styles du studio">
+              {STYLE_PREVIEWS.map((style) => (
+                <button
+                  key={style.id}
+                  type="button"
+                  aria-pressed={selectedStyle === style.id}
+                  onClick={() => setSelectedStyle(style.id)}
+                  className={`rounded-sm border px-2.5 py-1.5 text-xs font-semibold ${selectedStyle === style.id ? 'border-[#9A3412] bg-[#F4EFE6]' : 'border-[#E5DEC9] bg-white'}`}
+                >
+                  {style.title}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="overflow-hidden rounded-sm border p-5 transition-colors duration-300" style={{ background: previewStyle.background, color: previewStyle.text, borderColor: `${previewStyle.accent}55` }}>
+            <div className="mx-auto max-w-xl rounded-2xl border p-5 shadow-lg backdrop-blur-xl transition-all duration-300" style={{ background: previewStyle.surface, color: previewStyle.text, borderColor: `${previewStyle.accent}55` }}>
+              <div className="mb-4 flex items-center justify-between text-xs font-semibold">
+                <span>ATELIER / STUDIO</span><span className="tracking-widest">01 — 04</span>
+              </div>
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-[.22em]" style={{ color: previewStyle.accent }}>Nouvelle collection</p>
+              <h3 className="font-display text-2xl font-semibold">Une identité à votre image</h3>
+              <p className="mt-2 text-sm opacity-75">{previewStyle.description}. Palette, contraste et matière changent immédiatement.</p>
+              <button type="button" className="mt-4 rounded-full px-4 py-2 text-xs font-semibold text-white" style={{ background: previewStyle.accent }}>Explorer le style</button>
+            </div>
+          </div>
+        </div>
       </section>
 
       {/* Démonstration chorégraphiée par le défilement */}
@@ -241,12 +282,23 @@ export function WelcomeScreen({
           )}
         </div>
         <div className="space-y-3">
-          <h2 className="font-display text-xl font-semibold">Exemples fictifs pour explorer l’éditeur</h2>
+          <h2 className="font-display text-xl font-semibold">Modèles de studio multi-pages</h2>
           <div className="flex flex-wrap gap-3">
+            <button type="button" onClick={() => onOpenStarter('apparel')} className="px-4 py-2 rounded-sm border border-[#E5DEC9] bg-[#FFFFFF] hover:border-[#9A3412] text-sm cursor-pointer">Boutique textile · Accueil, Garçons, Filles, Accessoires</button>
+            <button type="button" onClick={() => onOpenStarter('portfolio')} className="px-4 py-2 rounded-sm border border-[#E5DEC9] bg-[#FFFFFF] hover:border-[#9A3412] text-sm cursor-pointer">Portfolio Liquid Glass · Studio, projets, contact</button>
+            <button type="button" onClick={() => onOpenStarter('agency')} className="px-4 py-2 rounded-sm border border-[#E5DEC9] bg-[#FFFFFF] hover:border-[#9A3412] text-sm cursor-pointer">Agence créative · Identité, projets, studio</button>
             <button type="button" onClick={() => onOpenStarter('kora')} className="px-4 py-2 rounded-sm border border-[#E5DEC9] bg-[#FFFFFF] hover:border-[#9A3412] text-sm cursor-pointer">Atelier Kora, architecture intérieure</button>
             <button type="button" onClick={() => onOpenStarter('seve')} className="px-4 py-2 rounded-sm border border-[#E5DEC9] bg-[#FFFFFF] hover:border-[#9A3412] text-sm cursor-pointer">Maison Sève, céramique utilitaire</button>
           </div>
         </div>
+        <details className="rounded-sm border border-[#E5DEC9] bg-[#FFFFFF] p-4 text-sm text-[#57534E]">
+          <summary className="cursor-pointer font-semibold text-[#1C1917]">Données et confidentialité</summary>
+          <div className="mt-3 space-y-2 leading-relaxed">
+            <p>Les projets sont enregistrés dans le stockage local de ce navigateur. Ils ne sont pas synchronisés avec un compte SiteForge. Utilisez l’icône de suppression d’un projet pour l’effacer, ou exportez-le en fichier .forge.json pour en conserver une copie.</p>
+            <p>Quand vous lancez une fonction IA, les éléments nécessaires à votre demande sont transmis au fournisseur configuré (Groq ou Google Gemini). Les données sont traitées selon les conditions et durées de conservation de ce fournisseur. N’envoyez pas de données sensibles ou de données concernant autrui sans autorisation.</p>
+            <p>Avant une mise en production, l’exploitant doit compléter cette information avec son identité, un contact vie privée, la base légale et les durées applicables à son déploiement. Cette information ne constitue pas un avis juridique ni une certification de conformité.</p>
+          </div>
+        </details>
         <AiNotice />
       </section>
     </div>

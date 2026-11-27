@@ -14,10 +14,21 @@
  */
 
 export const EFFECTS_CSS = `
+.sf-liquid-glass, [data-glass="true"] {
+  background: linear-gradient(135deg, rgba(255,255,255,calc(var(--glass-opacity,.22) * 1.25)), rgba(255,255,255,calc(var(--glass-opacity,.22) * .65)));
+  -webkit-backdrop-filter: blur(var(--glass-blur,24px)) saturate(185%) contrast(105%);
+  backdrop-filter: blur(var(--glass-blur,24px)) saturate(185%) contrast(105%);
+  border: 1px solid rgba(255,255,255,var(--glass-border-opacity,.38));
+  box-shadow: 0 20px 45px -15px rgba(15,23,42,.22), inset 0 1px 1px rgba(255,255,255,.55), inset 0 -1px 1px rgba(255,255,255,.12);
+}
+.sf-navbar-preview { position: relative; z-index: 40; }
+.sf-navbar-pill { margin: 12px auto; width: calc(100% - 24px); border-radius: var(--nav-radius); }
+.sf-navbar-wide { margin: 12px 20px; width: calc(100% - 40px); border-radius: var(--nav-radius); }
+.sf-navbar-drawer { border-radius: var(--nav-radius); }
 /* ===== Animations d'entrée ===== */
 [data-anim] { --sf-anim-ms: 700ms; }
 [data-anim]:not([data-anim="none"]) {
-  transition: opacity var(--sf-anim-ms) ease, transform var(--sf-anim-ms) cubic-bezier(0.2, 0.7, 0.2, 1);
+  transition: opacity var(--sf-anim-ms) cubic-bezier(0.22, 1, 0.36, 1), transform var(--sf-anim-ms) cubic-bezier(0.22, 1, 0.36, 1);
 }
 .sf-js [data-anim="fade-in"]:not(.is-in),
 .sf-js [data-anim="fade-up"]:not(.is-in),
@@ -186,6 +197,17 @@ export const EFFECTS_CSS = `
 `;
 
 export const EFFECTS_RUNTIME_JS = `(function () {
+  window.__sfImageError = function (img) {
+    if (!img || !img.parentNode) return;
+    var fallback = document.createElement('div');
+    fallback.className = 'sf-image-fallback';
+    fallback.setAttribute('role', 'img');
+    fallback.setAttribute('aria-label', img.alt || 'Image indisponible');
+    fallback.textContent = 'Image indisponible';
+    fallback.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;height:100%;min-height:4rem;padding:1rem;box-sizing:border-box;background:#EFE7D8;color:#57534E;font:500 12px sans-serif;text-align:center;border-radius:inherit';
+    img.parentNode.replaceChild(fallback, img);
+  };
+
   window.__sfFxReplay = function (el) {
     if (!el) return;
     el.classList.remove('is-in');
@@ -222,9 +244,10 @@ export const EFFECTS_RUNTIME_JS = `(function () {
     } else {
       var io = new IntersectionObserver(function (entries) {
         entries.forEach(function (entry) {
-          if (entry.isIntersecting) { entry.target.classList.add('is-in'); io.unobserve(entry.target); }
+          if (entry.isIntersecting) entry.target.classList.add('is-in');
+          else entry.target.classList.remove('is-in');
         });
-      }, { threshold: 0.12 });
+      }, { threshold: 0.12, rootMargin: '-8% 0px -8% 0px' });
       anims.forEach(function (el) { io.observe(el); });
       cleanups.push(function () { io.disconnect(); });
     }

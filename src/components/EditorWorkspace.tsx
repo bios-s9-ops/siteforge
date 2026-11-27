@@ -49,11 +49,12 @@ import { DropZone } from './DropZone';
 import { CanvasStage, type StageItem } from './CanvasStage';
 import { deriveAlternatePalette } from '../utils/colorHarmony';
 import { sanitizeLayoutMode } from '../utils/effectsCatalog';
+import { getSiteSettings, DEFAULT_NAVBAR_CONFIG } from '../utils/siteSettings';
 import { BlockRenderer, type InlineTextTarget } from './BlockRenderer';
 import { ExportModal } from './ExportModal';
 import { LivePreviewModal } from './LivePreviewModal';
 import { NewPageModal } from './NewPageModal';
-import { downloadForgeFile } from '../utils/projectIO';
+import { downloadForgeFile, switchProjectPage } from '../utils/projectIO';
 import { type FocusFieldTarget, InspectorPanel, type InspectorTab } from './InspectorPanel';
 
 interface EditorWorkspaceProps {
@@ -100,6 +101,16 @@ export function EditorWorkspace({
 
   const updateBlocks = (nextBlocks: SiteBlock[]) => {
     onChangeProject({ ...project, blocks: nextBlocks });
+  };
+
+  const navigatePage = (slug: string) => {
+    const target = project.pages?.find((page) => page.slug === slug);
+    if (target) {
+      onChangeProject(switchProjectPage(project, target.id));
+      setSelectedBlockId(null);
+    } else {
+      document.querySelector(`#${CSS.escape(slug)}`)?.scrollIntoView({ behavior: 'smooth' });
+    }
   };
 
   const handleMove = (blockId: string, direction: 'up' | 'down') => {
@@ -194,19 +205,7 @@ export function EditorWorkspace({
   }, [altTheme, project.theme]);
 
   const fxKey = useMemo(
-    () =>
-      JSON.stringify([
-        sanitizeLayoutMode(project.theme.layoutMode),
-        project.blocks.map((b) => [
-          b.id,
-          b.animation,
-          b.animationDurationMs,
-          b.content.imageEffect,
-          Boolean(b.content.image),
-          Boolean(b.content.secondaryImage),
-          b.content.items?.map((i) => [i.imageEffect, Boolean(i.image)]),
-        ]),
-      ]),
+    () => JSON.stringify([sanitizeLayoutMode(project.theme.layoutMode), project.blocks]),
     [project.blocks, project.theme.layoutMode],
   );
 
@@ -277,6 +276,19 @@ export function EditorWorkspace({
             onChange={(e) => onChangeProject({ ...project, name: e.target.value })}
             className="font-display font-semibold text-sm text-[#1C1917] bg-transparent border border-transparent hover:border-[#E5DEC9] focus:border-[#9A3412] focus:bg-[#FFFFFF] rounded-sm px-2 py-1 min-w-0 w-36 sm:w-52 truncate focus:outline-none"
           />
+          {project.pages && project.pages.length > 1 && (
+            <select
+              aria-label="Page active"
+              value={project.activePageId ?? project.pages[0].id}
+              onChange={(e) => {
+                onChangeProject(switchProjectPage(project, e.target.value));
+                setSelectedBlockId(null);
+              }}
+              className="hidden lg:block max-w-36 rounded-sm border border-[#E5DEC9] bg-white px-2 py-1 text-xs"
+            >
+              {project.pages.map((page) => <option key={page.id} value={page.id}>{page.title}</option>)}
+            </select>
+          )}
           {project.isDemo && (
             <span className="hidden xl:inline-block px-2 py-0.5 text-[11px] font-semibold bg-[#FEF3C7] text-[#78350F] border border-[#D97706]/50 shrink-0">
               Exemple fictif
@@ -737,6 +749,8 @@ export function EditorWorkspace({
                               isLast={index === project.blocks.length - 1}
                               previewMode={previewMode}
                               layoutMode={project.theme.layoutMode}
+                              navbarConfig={getSiteSettings(project).navbar ?? DEFAULT_NAVBAR_CONFIG}
+                              onNavigatePage={navigatePage}
                               onSelect={() => {
                                 setSelectedBlockId(block.id);
                                 if (inspectorTab === 'todo') setInspectorTab('block');

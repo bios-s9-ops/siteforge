@@ -2,6 +2,7 @@ import { Type } from '@google/genai';
 import { createLLM, type LLMClient } from './llm';
 import type {
   ArtDirectionId,
+  AIMutateResponse,
   BlockType,
   FontPairSuggestion,
   OriginalityReport,
@@ -10,6 +11,7 @@ import type {
   RealFactsInput,
   SiteBlock,
   SiteProject,
+  SiteMutation,
   StructureAnalysis,
 } from '../src/types/site';
 import {
@@ -39,6 +41,7 @@ import { FONT_CATALOG, findFont } from '../src/utils/fonts';
 import { formatImageCredit } from '../src/utils/credits';
 import { searchRoyaltyFreeImages } from './stockImageService';
 import { applyInspirationEffects, clearAllImages } from '../src/utils/projectIO';
+import { DEFAULT_NAVBAR_CONFIG, serializeSafeBlockCss } from '../src/utils/siteSettings';
 import type {
   ImageEffectConfig,
   SiteFonts,
@@ -336,6 +339,8 @@ const GENERATED_SITE_SCHEMA = {
               'navbar, hero, about, services, gallery, products, pricing, testimonials, faq, stats, team, logos, cta, contact, footer',
           },
           variant: { type: Type.STRING },
+          animation: { type: Type.STRING, description: SECTION_ANIMATION_IDS.join(', ') },
+          animationDurationMs: { type: Type.NUMBER },
           content: {
             type: Type.OBJECT,
             properties: {
@@ -619,6 +624,7 @@ ${catalogGuide}
 
 Règles de liens et de contact :
 - Les liens (linkHref, ctaHref, secondaryCtaHref) ne pointent que vers des sections réellement présentes dans la page (#accueil, #apropos, #services, #galerie, #produits, #tarifs, #faq, #contact...). Sans section correspondante, ne mets pas de lien.
+- Choisis pour chaque section (sauf navbar) une animation d'entrée parmi : ${SECTION_ANIMATION_IDS.join(', ')} ; durée en millisecondes comprise entre 150 et 3000.
 - Si l'objectif est de recevoir des demandes de prix ou de devis, utilise le bloc contact avec la variante "devis".
 - N'invente jamais d'e-mail, de téléphone ni d'adresse postale : écris "À compléter" tant qu'ils ne sont pas fournis.`;
 
@@ -803,6 +809,19 @@ const PROPOSALS_SCHEMA = {
             required: ['heading', 'body'],
           },
           blocks: { type: Type.ARRAY, items: PROPOSAL_BLOCK_SCHEMA },
+          pages: {
+            type: Type.ARRAY,
+            description: 'Pages distinctes uniquement si le brief nomme explicitement plusieurs pages/catégories.',
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                slug: { type: Type.STRING },
+                blocks: { type: Type.ARRAY, items: PROPOSAL_BLOCK_SCHEMA },
+              },
+              required: ['title', 'slug', 'blocks'],
+            },
+          },
         },
         required: ['name', 'concept', 'layoutMode', 'headerStyle', 'palette', 'fonts', 'blocks'],
       },
@@ -1002,8 +1021,9 @@ RÈGLES
 2. Les trois propositions doivent différer par layoutMode (trois valeurs distinctes), par headerStyle, par palette, par polices et par effets.
 3. Pour chaque bloc qui porte des images (hero, about, éléments de gallery / products / team), renseigne imageSlots avec une requête de recherche de photo libre de droits : 2 à 5 mots concrets et photographiables, en français ou en anglais (par exemple « croissants dorés comptoir boulangerie »). Jamais de mot abstrait, jamais de personne identifiable, jamais de marque. target = "content" pour l'image du bloc, "item" avec itemIndex pour l'image d'un élément. N'utilise pas before-after-slider.
 4. Entre 6 et 9 blocs, navbar en premier, footer en dernier. Ne génère AUCUN bloc testimonials, stats, team ou logos : aucune donnée réelle n'est fournie.
-5. Aucun avis, chiffre, prix, nom de personne, adresse, téléphone ou e-mail inventé : écris « À compléter » pour les coordonnées et les prix.
-6. Liens (linkHref, ctaHref) uniquement vers des sections présentes (#accueil, #apropos, #services, #galerie, #produits, #tarifs, #faq, #contact).
+5. Si le brief demande explicitement plusieurs pages ou catégories, retourne une entrée distincte par page dans "pages", avec title, slug et ses propres blocs; sinon laisse "pages" vide. Les liens de navigation doivent pointer vers les pages distinctes.
+6. Aucun avis, chiffre, prix, nom de personne, adresse, téléphone ou e-mail inventé : écris « À compléter » pour les coordonnées et les prix.
+7. Liens (linkHref, ctaHref) uniquement vers des sections présentes (#accueil, #apropos, #services, #galerie, #produits, #tarifs, #faq, #contact).
 
 Types de blocs et variantes autorisés :
 ${catalogGuide}`;
@@ -1046,7 +1066,7 @@ ${catalogGuide}`;
         visitorThemeToggle: raw.visitorThemeToggle === true,
       };
 
-      const blocks = enforceHonestyOnBlocks(Array.isArray(raw.blocks) ? (raw.blocks as RawBlock[]) : [], siteName) as BlockWithSlots[];
+      let blocks = enforceHonestyOnBlocks(Array.isArray(raw.blocks) ? (raw.blocks as RawBlock[]) : [], siteName) as BlockWithSlots[];
       if (blocks[0]?.type !== 'navbar') blocks.unshift(createBlockInstance('navbar', siteName) as BlockWithSlots);
       if (blocks[blocks.length - 1]?.type !== 'footer') blocks.push(createBlockInstance('footer', siteName) as BlockWithSlots);
 
@@ -1059,6 +1079,39 @@ ${catalogGuide}`;
       }
 
       await fillImageSlots(blocks, deps.search, cache);
+      const pages = Array.isArray(raw.pages)
+        ? await Promise.all((raw.pages as Array<Record<string, unknown>>).slice(0, 7).map(async (rawPage, pageIndex) => {
+            const title = sanitizeForbiddenCopy(String(rawPage.title || `Page ${pageIndex + 1}`)).slice(0, 80);
+            const slug = String(rawPage.slug || title)
+              .toLowerCase()
+              .normalize('NFD')
+              .replace(/[\u0300-\u036f]/g, '')
+              .replace(/[^a-z0-9-]+/g, '-')
+              .replace(/^-|-$/g, '')
+              .slice(0, 60) || `page-${pageIndex + 1}`;
+            const pageBlocks = enforceHonestyOnBlocks(Array.isArray(rawPage.blocks) ? rawPage.blocks as RawBlock[] : [], siteName) as BlockWithSlots[];
+            if (pageBlocks[0]?.type !== 'navbar') pageBlocks.unshift(createBlockInstance('navbar', siteName) as BlockWithSlots);
+            if (pageBlocks.at(-1)?.type !== 'footer') pageBlocks.push(createBlockInstance('footer', siteName) as BlockWithSlots);
+            await fillImageSlots(pageBlocks, deps.search, cache);
+            const navbar = pageBlocks.find((block) => block.type === 'navbar');
+            if (navbar) {
+              navbar.content.items = (raw.pages as Array<Record<string, unknown>>).slice(0, 7).map((page, index) => {
+                const linkTitle = sanitizeForbiddenCopy(String(page.title || `Page ${index + 1}`)).slice(0, 80);
+                const linkSlug = String(page.slug || linkTitle).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '');
+                return { id: createBlockId('it'), title: linkTitle, linkHref: `#page-${linkSlug}` };
+              });
+            }
+            return { id: `page_${slug}`, title, slug, blocks: pageBlocks };
+          }))
+        : [];
+      if (pages.length) {
+        blocks = pages[0].blocks as BlockWithSlots[];
+        const navItems = pages.map((page) => ({ id: createBlockId('it'), title: page.title, linkHref: `#page-${page.slug}` }));
+        for (const page of pages) {
+          const nav = page.blocks.find((block) => block.type === 'navbar');
+          if (nav) nav.content.items = navItems;
+        }
+      }
 
       const projectInput: ProjectInput = {
         mode: 'ai',
@@ -1079,6 +1132,7 @@ ${catalogGuide}`;
         isDemo: false,
         theme,
         blocks,
+        ...(pages.length ? { pages, activePageId: pages[0].id } : {}),
         projectInput,
         createdAt: now,
         updatedAt: now,
@@ -1091,6 +1145,182 @@ ${catalogGuide}`;
       };
     }),
   );
+}
+
+function sanitizeNavbarPatch(raw: unknown): Partial<NonNullable<NonNullable<SiteProject['settings']>['navbar']>> {
+  const patch = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+  const next: Partial<NonNullable<SiteProject['settings']>['navbar']> = {};
+  if (['sticky-full', 'floating-pill', 'floating-wide', 'sidebar-drawer'].includes(String(patch.variant))) {
+    next.variant = patch.variant as NonNullable<NonNullable<SiteProject['settings']>['navbar']>['variant'];
+  }
+  for (const [key, min, max] of [
+    ['opacity', 0, 100],
+    ['blurPx', 0, 32],
+    ['borderRadiusPx', 0, 999],
+    ['borderOpacity', 0, 100],
+  ] as const) {
+    if (patch[key] !== undefined) next[key] = Math.max(min, Math.min(max, Number(patch[key]) || 0));
+  }
+  if (typeof patch.shrinkOnScroll === 'boolean') next.shrinkOnScroll = patch.shrinkOnScroll;
+  if (typeof patch.autoHideOnScrollDown === 'boolean') next.autoHideOnScrollDown = patch.autoHideOnScrollDown;
+  if (['pill', 'underline', 'glow', 'none'].includes(String(patch.activeIndicator))) {
+    next.activeIndicator = patch.activeIndicator as NonNullable<NonNullable<SiteProject['settings']>['navbar']>['activeIndicator'];
+  }
+  return next;
+}
+
+function sanitizeMutationContent(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object') return {};
+  const source = raw as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const key of ['heading', 'subheading', 'body', 'kicker', 'ctaLabel', 'brandName', 'email', 'phone', 'address', 'copyright']) {
+    if (typeof source[key] === 'string') result[key] = sanitizeForbiddenCopy(source[key]).slice(0, 2000);
+  }
+  if (Array.isArray(source.items)) {
+    result.items = source.items.slice(0, 30).flatMap((rawItem) => {
+      if (!rawItem || typeof rawItem !== 'object') return [];
+      const item = rawItem as Record<string, unknown>;
+      return [{
+        id: createBlockId('it'),
+        title: typeof item.title === 'string' ? sanitizeForbiddenCopy(item.title).slice(0, 200) : TODO_MARKER,
+        description: typeof item.description === 'string' ? sanitizeForbiddenCopy(item.description).slice(0, 1000) : undefined,
+        price: typeof item.price === 'string' ? sanitizeForbiddenCopy(item.price).slice(0, 80) : undefined,
+        linkLabel: typeof item.linkLabel === 'string' ? sanitizeForbiddenCopy(item.linkLabel).slice(0, 100) : undefined,
+        linkHref: typeof item.linkHref === 'string' && /^#|^https?:\/\//i.test(item.linkHref) ? item.linkHref.slice(0, 300) : undefined,
+      }];
+    });
+  }
+  return result;
+}
+
+function sanitizeAIMutations(raw: unknown, project: SiteProject): SiteMutation[] {
+  if (!Array.isArray(raw)) return [];
+  const pages = project.pages ?? [{ id: project.activePageId || 'home', title: 'Accueil', slug: 'accueil', blocks: project.blocks }];
+  const mutations: SiteMutation[] = [];
+  for (const value of raw.slice(0, 12)) {
+    if (!value || typeof value !== 'object') continue;
+    const item = value as Record<string, unknown>;
+    if (item.type === 'UPDATE_NAVBAR') {
+      const patch = sanitizeNavbarPatch(item.patch);
+      if (Object.keys(patch).length) mutations.push({ type: 'UPDATE_NAVBAR', patch });
+    } else if (item.type === 'SET_GLOBAL_STYLE') {
+      const rawPatch = item.patch && typeof item.patch === 'object' ? item.patch as Record<string, unknown> : {};
+      const patch: Record<string, unknown> = {};
+      if (typeof rawPatch.liquidGlass === 'boolean') patch.liquidGlass = rawPatch.liquidGlass;
+      if (['vertical', 'horizontal-slides', 'bento-grid', 'split-screen', 'scroll-story'].includes(String(rawPatch.layoutMode))) patch.layoutMode = rawPatch.layoutMode;
+      if (['classic-bar', 'floating-glass', 'vertical-sidebar', 'minimal-centered', 'hidden'].includes(String(rawPatch.headerStyle))) patch.headerStyle = rawPatch.headerStyle;
+      if (rawPatch.palette && typeof rawPatch.palette === 'object') {
+        const palette = rawPatch.palette as Record<string, unknown>;
+        const cleanPalette: Record<string, string> = {};
+        for (const key of ['primary', 'secondary', 'background', 'surface', 'text', 'mutedText']) {
+          const color = normalizeHex(String(palette[key] ?? ''));
+          if (color) cleanPalette[key] = color;
+        }
+        if (Object.keys(cleanPalette).length) patch.palette = { ...project.theme.palette, ...cleanPalette };
+      }
+      if (Object.keys(patch).length) mutations.push({ type: 'SET_GLOBAL_STYLE', patch });
+    } else if (item.type === 'ADD_PAGE' && item.page && typeof item.page === 'object') {
+      const page = item.page as Record<string, unknown>;
+      const title = sanitizeForbiddenCopy(String(page.title ?? 'Nouvelle page')).slice(0, 100);
+      const slug = String(page.slug ?? title).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || `page-${pages.length + 1}`;
+      const blocks = Array.isArray(page.blocks) ? enforceHonestyOnBlocks(page.blocks.slice(0, 20) as RawBlock[], project.name) : [];
+      mutations.push({ type: 'ADD_PAGE', page: { id: `page_${slug}`, title, slug, blocks } });
+    } else if (item.type === 'ADD_BLOCK') {
+      const pageId = String(item.pageId ?? project.activePageId ?? pages[0].id);
+      if (!pages.some((page) => page.id === pageId) || !item.block || typeof item.block !== 'object') continue;
+      const block = item.block as Record<string, unknown>;
+      if (typeof block.type !== 'string' || !BLOCK_CATALOG.some((definition) => definition.type === block.type)) continue;
+      const built = enforceHonestyOnBlocks([{
+        type: block.type,
+        variant: String(block.variant ?? ''),
+        content: sanitizeMutationContent(block.content),
+      }], project.name)[0];
+      if (built) mutations.push({ type: 'ADD_BLOCK', pageId, index: Number.isFinite(Number(item.index)) ? Number(item.index) : undefined, block: built });
+    } else if (item.type === 'UPDATE_BLOCK') {
+      const pageId = String(item.pageId ?? project.activePageId ?? '');
+      const blockId = String(item.blockId ?? '');
+      const page = pages.find((candidate) => candidate.id === pageId);
+      if (!page?.blocks.some((block) => block.id === blockId) || !item.patch || typeof item.patch !== 'object') continue;
+      const rawPatch = item.patch as Record<string, unknown>;
+      const patch: Partial<SiteBlock> = {};
+      if (rawPatch.content) patch.content = sanitizeMutationContent(rawPatch.content) as SiteBlock['content'];
+      if (rawPatch.animation !== undefined) patch.animation = sanitizeSectionAnimation(rawPatch.animation);
+      if (rawPatch.animationDurationMs !== undefined) patch.animationDurationMs = clampDuration(rawPatch.animationDurationMs);
+      if (typeof rawPatch.visible === 'boolean') patch.visible = rawPatch.visible;
+      if (Object.keys(patch).length) mutations.push({ type: 'UPDATE_BLOCK', pageId, blockId, patch });
+    } else if (item.type === 'DELETE_BLOCK') {
+      const pageId = String(item.pageId ?? project.activePageId ?? '');
+      const blockId = String(item.blockId ?? '');
+      if (pages.find((page) => page.id === pageId)?.blocks.some((block) => block.id === blockId)) {
+        mutations.push({ type: 'DELETE_BLOCK', pageId, blockId });
+      }
+    } else if (item.type === 'APPLY_CUSTOM_CSS') {
+      const target = item.target === 'global' ? 'global' : String(item.target ?? '');
+      const css = typeof item.css === 'string' ? serializeSafeBlockCss(item.css) : '';
+      if (css && (target === 'global' || pages.some((page) => page.blocks.some((block) => block.id === target)))) {
+        mutations.push({ type: 'APPLY_CUSTOM_CSS', target, css });
+      }
+    }
+  }
+  return mutations;
+}
+
+export async function mutateSiteWithAI(input: {
+  userPrompt: string;
+  activePageId?: string;
+  selectedBlockId?: string | null;
+  projectSnapshot: SiteProject;
+}): Promise<AIMutateResponse> {
+  const prompt = input.userPrompt.trim().slice(0, 2400);
+  if (!prompt) throw Object.assign(new Error('Décrivez le changement souhaité.'), { status: 400 });
+  const project = input.projectSnapshot;
+  const snapshot = buildMutationSnapshot(project, input.activePageId, input.selectedBlockId);
+  const result = await getClient().models.generateContent({
+    model: MODEL_NAME,
+    contents: `Propose des mutations SiteForge pour cette demande utilisateur: ${prompt}\nProjet actuel (référence uniquement): ${JSON.stringify(snapshot).slice(0, 65000)}\nRetourne {assistantMessage:string,mutations:[{type,patch,pageId,blockId,index,page,block,target,css}]}. Types permis: UPDATE_NAVBAR, SET_GLOBAL_STYLE, ADD_PAGE, ADD_BLOCK, UPDATE_BLOCK, DELETE_BLOCK, APPLY_CUSTOM_CSS. Utilise des titres et textes concrets. N'invente jamais de prix, coordonnées, avis ou statistiques: garde "À compléter". Pour les mutations sur une page, réutilise son id. Pour les ajouts de blocs, utilise des types de bloc existants et des variantes valides.`,
+    config: { responseMimeType: 'application/json', temperature: 0.3 },
+  });
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(result.text ?? '{}') as Record<string, unknown>;
+  } catch {
+    throw Object.assign(new Error('L’IA a renvoyé une réponse illisible. Réessayez.'), { status: 502, code: 'INVALID_JSON' });
+  }
+  const mutations = sanitizeAIMutations(parsed.mutations, project);
+  return {
+    assistantMessage: sanitizeForbiddenCopy(typeof parsed.assistantMessage === 'string' ? parsed.assistantMessage : 'Modifications préparées.') || 'Modifications préparées.',
+    mutations,
+  };
+}
+
+export function buildMutationSnapshot(project: SiteProject, activePageId?: string, selectedBlockId?: string | null) {
+  const pages = project.pages ?? [{ id: project.activePageId || 'home', title: 'Accueil', slug: 'accueil', blocks: project.blocks }];
+  const redactBlocks = (blocks: SiteBlock[]) => blocks.map((block) => {
+    const content = { ...block.content };
+    for (const key of [
+      'email', 'phone', 'address', 'image', 'imageCredit', 'imageAlt',
+      'secondaryImage', 'secondaryImageCredit', 'secondaryImageAlt',
+    ] as const) delete content[key];
+    if (content.items) {
+      content.items = content.items.map((item) => {
+        const { image, imageAlt, imageCredit, imageEffect, ...safeItem } = item;
+        const linkHref = /^mailto:|^tel:|wa\.me|api\.whatsapp\.com/i.test(safeItem.linkHref ?? '') ? undefined : safeItem.linkHref;
+        return { ...safeItem, linkHref };
+      });
+    }
+    return { ...block, content };
+  });
+  return {
+    id: project.id,
+    name: project.name,
+    theme: { ...project.theme, customCss: undefined },
+    navbar: project.settings?.navbar ?? DEFAULT_NAVBAR_CONFIG,
+    activePageId: activePageId ?? project.activePageId,
+    selectedBlockId,
+    pages: pages
+      .map((page) => ({ id: page.id, title: page.title, slug: page.slug, blocks: redactBlocks(page.blocks) }))
+      .slice(0, 10),
+  };
 }
 
 export async function regenerateSingleBlock(input: {

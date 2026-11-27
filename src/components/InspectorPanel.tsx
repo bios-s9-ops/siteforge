@@ -45,7 +45,8 @@ import { DEFAULT_IMAGE_EFFECT } from '../utils/effectsCatalog';
 import { collectIncompleteFields, isEmptyOrTodo, isTodoValue } from '../utils/honesty';
 import { PublishPanel } from './PublishPanel';
 import { AiNotice } from './AiNotice';
-import { ColorEditor, FontSelector, LayoutControls } from './StyleControls';
+import { ColorEditor, FontSelector, LayoutControls, NavbarControls } from './StyleControls';
+import { DEFAULT_NAVBAR_CONFIG, getSiteSettings } from '../utils/siteSettings';
 
 export type InspectorTab = 'block' | 'style' | 'seo' | 'publish' | 'todo';
 
@@ -894,6 +895,72 @@ export function InspectorPanel({
                       />
                     </label>
                   </div>
+                  <label className="flex items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(selectedBlock.styleOverride?.glassMode)}
+                      onChange={(e) => onUpdateBlock({
+                        ...selectedBlock,
+                        styleOverride: { ...selectedBlock.styleOverride, glassMode: e.target.checked },
+                      })}
+                      className="accent-[#9A3412]"
+                    />
+                    Liquid Glass pour ce bloc
+                  </label>
+                  {([
+                    ['opacity', 'Transparence du verre', 0, 100],
+                    ['blurPx', 'Flou', 0, 32],
+                    ['paddingY', 'Espacement vertical', 0, 160],
+                    ['borderRadius', 'Arrondi', 0, 999],
+                    ['shadowDepth', 'Profondeur de l’ombre', 0, 48],
+                  ] as const).map(([key, title, min, max]) => (
+                    <label key={key} className="block text-xs">
+                      <span className="flex justify-between"><span>{title}</span><span>{selectedBlock.styleOverride?.[key] ?? (key === 'opacity' ? 22 : key === 'blurPx' ? 24 : 0)}</span></span>
+                      <input
+                        type="range"
+                        min={min}
+                        max={max}
+                        value={selectedBlock.styleOverride?.[key] ?? (key === 'opacity' ? 22 : key === 'blurPx' ? 24 : 0)}
+                        onChange={(e) => onUpdateBlock({
+                          ...selectedBlock,
+                          styleOverride: { ...selectedBlock.styleOverride, [key]: Number(e.target.value) },
+                        })}
+                        className="w-full accent-[#9A3412]"
+                      />
+                    </label>
+                  ))}
+                  <label className="block text-xs">
+                    <span className="block font-semibold mb-1">Dégradé de fond</span>
+                    <input
+                      type="text"
+                      maxLength={180}
+                      placeholder="linear-gradient(135deg, #fff, #f3e8ff)"
+                      value={selectedBlock.styleOverride?.backgroundGradient ?? ''}
+                      onChange={(e) => onUpdateBlock({
+                        ...selectedBlock,
+                        styleOverride: {
+                          ...selectedBlock.styleOverride,
+                          backgroundGradient: /^linear-gradient\([\w\s,#.%()-]+\)$/i.test(e.target.value) ? e.target.value : '',
+                        },
+                      })}
+                      className={fieldInputClass('')}
+                    />
+                  </label>
+                  <label className="block text-xs">
+                    <span className="block font-semibold mb-1">CSS visuel (déclarations sûres)</span>
+                    <textarea
+                      rows={3}
+                      maxLength={2000}
+                      placeholder="border-radius: 20px; text-align: center"
+                      value={selectedBlock.styleOverride?.customCss ?? ''}
+                      onChange={(e) => onUpdateBlock({
+                        ...selectedBlock,
+                        styleOverride: { ...selectedBlock.styleOverride, customCss: e.target.value },
+                      })}
+                      className={fieldInputClass('')}
+                    />
+                    <span className="text-[10px] text-[#57534E]">Propriétés décoratives autorisées uniquement; les URLs et règles CSS sont bloquées.</span>
+                  </label>
                 </div>
               </div>
             )}
@@ -1101,6 +1168,36 @@ export function InspectorPanel({
             </div>
 
             <LayoutControls theme={project.theme} onChange={(theme) => onUpdateProject({ ...project, theme })} />
+
+            <div className="space-y-2">
+              <span className="block text-xs font-semibold text-[#1C1917]">Navigation interactive</span>
+              <NavbarControls
+                value={getSiteSettings(project).navbar ?? DEFAULT_NAVBAR_CONFIG}
+                onChange={(navbar) => onUpdateProject({ ...project, settings: { ...getSiteSettings(project), navbar } })}
+              />
+            </div>
+
+            <label className="flex items-center gap-2 text-xs cursor-pointer">
+              <input
+                type="checkbox"
+                checked={Boolean(project.theme.liquidGlass)}
+                onChange={(e) => onUpdateProject({ ...project, theme: { ...project.theme, liquidGlass: e.target.checked } })}
+                className="accent-[#9A3412]"
+              />
+              Appliquer le thème Liquid Glass
+            </label>
+            <label className="block text-xs">
+              <span className="mb-1 block font-semibold text-[#1C1917]">CSS global visuel (déclarations sûres)</span>
+              <textarea
+                rows={3}
+                maxLength={2000}
+                value={project.theme.customCss ?? ''}
+                onChange={(e) => onUpdateProject({ ...project, theme: { ...project.theme, customCss: e.target.value } })}
+                placeholder="letter-spacing: .01em; color: #24201c"
+                className="w-full rounded-sm border border-[#E5DEC9] bg-white p-2 text-xs"
+              />
+              <span className="text-[10px] text-[#57534E]">Propriétés décoratives seulement; les règles imbriquées et les URLs sont refusées.</span>
+            </label>
 
             <ColorEditor theme={project.theme} onChange={(theme) => onUpdateProject({ ...project, theme })} />
 

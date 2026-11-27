@@ -1,5 +1,6 @@
 import type {
   FontPairSuggestion,
+  AIMutateResponse,
   OriginalityReport,
   PaletteSuggestion,
   ProjectInput,
@@ -138,4 +139,13 @@ export interface AiBrief {
 export async function apiGenerateProposals(brief: AiBrief): Promise<SiteProposal[]> {
   const res = await postJson<{ proposals: SiteProposal[] }>('/api/gemini/generate-proposals', brief);
   return res.proposals;
+}
+
+export async function apiMutateSite(input: {
+  userPrompt: string;
+  activePageId?: string;
+  selectedBlockId?: string | null;
+  projectSnapshot: SiteProject;
+}): Promise<AIMutateResponse> {
+  return postJson('/api/ai/mutate', input);
 }

@@ -8,6 +8,7 @@ import {
   MIN_ANIMATION_MS,
   SECTION_ANIMATIONS,
   sanitizeImageEffect,
+  sanitizeSectionAnimation,
 } from '../utils/effectsCatalog';
 
 const selectClass = 'w-full px-2.5 py-1.5 text-xs bg-[#FFFFFF] border border-[#E5DEC9] rounded-sm';
@@ -37,7 +38,7 @@ export function ImageEffectControls({ value, onChange, hasSecondaryImage = false
         <select
           id={`${idPrefix}-scroll`}
           value={effect.scroll}
-          onChange={(e) => set({ scroll: e.target.value as ImageEffectConfig['scroll'] })}
+          onChange={(e) => set({ scroll: sanitizeImageEffect({ ...effect, scroll: e.target.value }).scroll })}
           className={selectClass}
         >
           {IMAGE_SCROLL_EFFECTS.map((o) => (
@@ -72,7 +73,7 @@ export function ImageEffectControls({ value, onChange, hasSecondaryImage = false
         <select
           id={`${idPrefix}-3d`}
           value={effect.effect3d}
-          onChange={(e) => set({ effect3d: e.target.value as ImageEffectConfig['effect3d'] })}
+          onChange={(e) => set({ effect3d: sanitizeImageEffect({ ...effect, effect3d: e.target.value }).effect3d })}
           className={selectClass}
         >
           {IMAGE_3D_EFFECTS.map((o) => (
@@ -127,7 +128,7 @@ export function AnimationControls({ animation = 'none', durationMs = 700, onChan
         <select
           id="section-animation"
           value={animation}
-          onChange={(e) => onChange({ animation: e.target.value as SectionAnimationType })}
+          onChange={(e) => onChange({ animation: sanitizeSectionAnimation(e.target.value) })}
           className={selectClass}
         >
           {SECTION_ANIMATIONS.map((o) => (

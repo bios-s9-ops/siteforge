@@ -3,6 +3,7 @@ import { Moon, Sun } from 'lucide-react';
 import type { SiteBlock, SiteTheme } from '../types/site';
 import { EFFECTS_CSS, EFFECTS_RUNTIME_JS, BENTO_SPANS } from '../utils/effectsRuntime';
 import { sanitizeHeaderStyle, sanitizeLayoutMode } from '../utils/effectsCatalog';
+import { serializeSafeBlockCss } from '../utils/siteSettings';
 
 export interface StageItem {
   block: SiteBlock;
@@ -146,7 +147,7 @@ export function CanvasStage({ theme, items, tail, previewMode, fxKey, scroller, 
 
   return (
     <div ref={rootRef} className="sf-stage" data-layout={layout} data-header={header} data-theme={theme.mode} style={vars}>
-      <style>{EFFECTS_CSS + CANVAS_CSS}</style>
+      <style>{EFFECTS_CSS + CANVAS_CSS + (theme.customCss ? `:root{${serializeSafeBlockCss(theme.customCss)}}` : '')}</style>
       {navItems.length > 0 && (
         <div className="sf-nav-slot">
           {navItems.map((i) => (

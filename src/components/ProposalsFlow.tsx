@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { ArrowLeft, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { ArrowLeft, Eye, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import type { SiteProject } from '../types/site';
 import { ApiClientError, apiGenerateProposals, type SiteProposal } from '../services/geminiClient';
 import { HEADER_STYLES, LAYOUT_MODES } from '../utils/effectsCatalog';
 import { AiNotice } from './AiNotice';
+import { LivePreviewModal } from './LivePreviewModal';
 
 interface ProposalsFlowProps {
   /** Appelé avec le projet choisi */
@@ -28,6 +29,7 @@ export function ProposalsFlow({ onChoose, onCancel, embedded = false }: Proposal
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [proposals, setProposals] = useState<SiteProposal[] | null>(null);
+  const [previewProject, setPreviewProject] = useState<SiteProject | null>(null);
 
   const generate = async () => {
     setLoading(true);
@@ -94,7 +96,12 @@ export function ProposalsFlow({ onChoose, onCancel, embedded = false }: Proposal
         {proposals && (
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="font-display text-2xl font-semibold">Choisissez une proposition</h2>
+              <div className="flex items-center gap-3">
+                <h2 className="font-display text-2xl font-semibold">Choisissez une proposition</h2>
+                <button type="button" onClick={() => window.dispatchEvent(new Event('siteforge:open-ai'))} className="flex items-center gap-1.5 rounded-sm border border-[#E5DEC9] px-3 py-2 text-xs font-semibold hover:bg-[#F4EFE6]">
+                  <Sparkles className="h-4 w-4" aria-hidden="true" /> Copilote IA
+                </button>
+              </div>
               <div className="flex gap-2">
                 <button type="button" onClick={() => setProposals(null)} className="px-3 py-2 rounded-sm border border-[#E5DEC9] bg-[#FFFFFF] hover:bg-[#F4EFE6] text-sm cursor-pointer">Modifier le brief</button>
                 <button type="button" onClick={generate} disabled={loading} className="flex items-center gap-1.5 px-3 py-2 rounded-sm border border-[#E5DEC9] bg-[#FFFFFF] hover:bg-[#F4EFE6] text-sm cursor-pointer disabled:opacity-50">
@@ -130,6 +137,14 @@ export function ProposalsFlow({ onChoose, onCancel, embedded = false }: Proposal
                         <div><dt className="inline font-semibold">Polices : </dt><dd className="inline">{t.fonts.heading} et {t.fonts.body}</dd></div>
                         <div><dt className="inline font-semibold">Sections : </dt><dd className="inline">{prop.project.blocks.length}</dd></div>
                       </dl>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewProject(prop.project)}
+                        className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-sm border border-[#E5DEC9] bg-[#FFFFFF] hover:bg-[#F4EFE6] text-sm font-semibold cursor-pointer"
+                      >
+                        <Eye className="w-4 h-4" aria-hidden="true" />
+                        Prévisualiser
+                      </button>
                       <button type="button" onClick={() => onChoose(prop.project)} className="mt-auto px-4 py-2 rounded-sm bg-[#9A3412] hover:bg-[#7C2D12] text-white text-sm font-semibold cursor-pointer">
                         Choisir cette proposition
                       </button>
@@ -139,6 +154,13 @@ export function ProposalsFlow({ onChoose, onCancel, embedded = false }: Proposal
               })}
             </ul>
             <AiNotice />
+            {previewProject && (
+              <LivePreviewModal
+                isOpen
+                project={previewProject}
+                onClose={() => setPreviewProject(null)}
+              />
+            )}
           </div>
         )}
       </div>

@@ -1,4 +1,5 @@
-import type { SiteBlock, SiteProject, SiteSettings } from '../types/site';
+import type { CSSProperties } from 'react';
+import type { NavbarConfig, SiteBlock, SiteProject, SiteSettings } from '../types/site';
 import { isEmptyOrTodo } from './honesty';
 import { sanitizeUrl } from './validation';
 
@@ -6,8 +7,61 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
   formProvider: 'none',
 };
 
+export const DEFAULT_NAVBAR_CONFIG: NavbarConfig = {
+  variant: 'sticky-full',
+  opacity: 96,
+  blurPx: 16,
+  borderRadiusPx: 24,
+  borderOpacity: 20,
+  shrinkOnScroll: true,
+  autoHideOnScrollDown: false,
+  activeIndicator: 'underline',
+};
+
 export function getSiteSettings(project: Pick<SiteProject, 'settings'>): SiteSettings {
-  return { ...DEFAULT_SITE_SETTINGS, ...(project.settings ?? {}) };
+  return {
+    ...DEFAULT_SITE_SETTINGS,
+    ...(project.settings ?? {}),
+    navbar: { ...DEFAULT_NAVBAR_CONFIG, ...(project.settings?.navbar ?? {}) },
+  };
+}
+
+const CUSTOM_STYLE_PROPERTIES: Record<string, string> = {
+  color: 'color',
+  'background-color': 'backgroundColor',
+  'border-color': 'borderColor',
+  'border-width': 'borderWidth',
+  'border-style': 'borderStyle',
+  'font-size': 'fontSize',
+  'font-weight': 'fontWeight',
+  'letter-spacing': 'letterSpacing',
+  'line-height': 'lineHeight',
+  'text-align': 'textAlign',
+  'text-transform': 'textTransform',
+  'box-shadow': 'boxShadow',
+  'border-radius': 'borderRadius',
+  opacity: 'opacity',
+};
+
+/** CSS limité à des déclarations visuelles sans URL, règles imbriquées ni contenu exécutable. */
+export function parseSafeBlockCss(css?: string): CSSProperties {
+  const styles: Record<string, string> = {};
+  for (const declaration of (css ?? '').slice(0, 2000).split(';')) {
+    const separator = declaration.indexOf(':');
+    if (separator < 1) continue;
+    const property = declaration.slice(0, separator).trim().toLowerCase();
+    const value = declaration.slice(separator + 1).trim();
+    const reactProperty = CUSTOM_STYLE_PROPERTIES[property];
+    if (!reactProperty || !value || /url\s*\(|expression\s*\(|[{}<>\\@]/i.test(value)) continue;
+    styles[reactProperty] = value.slice(0, 120);
+  }
+  return styles as CSSProperties;
+}
+
+export function serializeSafeBlockCss(css?: string): string {
+  return Object.entries(parseSafeBlockCss(css))
+    .map(([property, value]) => `${property.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}:${String(value).replace(/[;"<>]/g, '')}`)
+    .join(';');
 }
 
 export function isValidEmail(value?: string): boolean {

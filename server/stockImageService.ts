@@ -71,7 +71,9 @@ export function normalizeOpenverse(data: unknown): StockImageResult[] {
   if (!Array.isArray(results)) return [];
   const out: StockImageResult[] = [];
   for (const item of results) {
-    if (!isHttpUrl(item.url) || !item.id) continue;
+    const url = isHttpUrl(item.url) ? item.url : isHttpUrl(item.thumbnail) ? item.thumbnail : null;
+    if (!url || !item.id) continue;
+    const thumbUrl = isHttpUrl(item.thumbnail) ? item.thumbnail : url;
     const code = (item.license ?? '').toLowerCase();
     const license =
       code === 'cc0'
@@ -84,8 +86,8 @@ export function normalizeOpenverse(data: unknown): StockImageResult[] {
     if (!isUsableLicense(license)) continue;
     out.push({
       id: `openverse:${item.id}`,
-      url: item.url,
-      thumbUrl: isHttpUrl(item.thumbnail) ? item.thumbnail : item.url,
+      url,
+      thumbUrl,
       title: stripHtml(item.title) || 'Sans titre',
       author: stripHtml(item.creator) || 'Auteur inconnu',
       license,
@@ -114,7 +116,9 @@ export function normalizeWikimedia(data: unknown): StockImageResult[] {
   const out: StockImageResult[] = [];
   for (const page of Object.values(pages)) {
     const info = page.imageinfo?.[0];
-    if (!info || !isHttpUrl(info.url)) continue;
+    if (!info) continue;
+    const url = isHttpUrl(info.url) ? info.url : isHttpUrl(info.thumburl) ? info.thumburl : null;
+    if (!url) continue;
     if (!/^image\/(jpeg|png|webp)$/i.test(info.mime ?? '')) continue;
     const meta = info.extmetadata ?? {};
     const license = stripHtml(meta.LicenseShortName?.value) || stripHtml(meta.UsageTerms?.value);
@@ -122,8 +126,8 @@ export function normalizeWikimedia(data: unknown): StockImageResult[] {
     const title = stripHtml(page.title).replace(/^File:/i, '').replace(/\.[a-z0-9]+$/i, '');
     out.push({
       id: `wikimedia:${page.pageid ?? title}`,
-      url: isHttpUrl(info.thumburl) ? info.thumburl : info.url,
-      thumbUrl: isHttpUrl(info.thumburl) ? info.thumburl : info.url,
+      url: isHttpUrl(info.thumburl) ? info.thumburl : url,
+      thumbUrl: isHttpUrl(info.thumburl) ? info.thumburl : url,
       title: title || 'Sans titre',
       author: stripHtml(meta.Artist?.value) || 'Auteur inconnu',
       license,

@@ -1,10 +1,12 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Check, Copy, EyeOff, GripVertical, Image as ImageIcon, Trash2 } from 'lucide-react';
-import type { ImageEffectConfig, SiteBlock, SiteTheme, ViewportMode } from '../types/site';
+import { ArrowDown, ArrowUp, Check, Copy, EyeOff, GripVertical, Image as ImageIcon, Menu, Trash2, X } from 'lucide-react';
+import type { ImageEffectConfig, NavbarConfig, SiteBlock, SiteTheme, ViewportMode } from '../types/site';
 import { hasAnyImageEffect, sanitizeImageEffect, sanitizeSectionAnimation, clampDuration } from '../utils/effectsCatalog';
 import { getBlockDefinition } from '../utils/blockCatalog';
 import { computeBlockSurfaceColors, isTodoValue } from '../utils/honesty';
 import { getContrastTextColor, sanitizeColor } from '../utils/validation';
+import { DEFAULT_NAVBAR_CONFIG } from '../utils/siteSettings';
+import { parseSafeBlockCss } from '../utils/siteSettings';
 
 interface BlockRendererProps {
   block: SiteBlock;
@@ -27,6 +29,8 @@ interface BlockRendererProps {
   previewMode?: boolean;
   /** Architecture de la page : ajoute l'attribut du récit au défilement */
   layoutMode?: string;
+  navbarConfig?: NavbarConfig;
+  onNavigatePage?: (pageSlug: string) => void;
 }
 
 const RADIUS_PX: Record<SiteTheme['borderRadius'], string> = {
@@ -185,6 +189,8 @@ function PreviewImage({
 }) {
   const [failed, setFailed] = useState(false);
 
+  useEffect(() => setFailed(false), [src, secondary]);
+
   if (!src || failed) {
     return (
       <div
@@ -232,7 +238,7 @@ function PreviewImage({
       <div className="sf-fx-3d" style={{ borderRadius: radius }}>
         <div className="sf-fx-inner">
           <img src={src} alt={alt || ''} referrerPolicy="no-referrer" onError={() => setFailed(true)} />
-          {hasAfter && <img className="sf-fx-after" src={secondary} alt={secondaryAlt || ''} referrerPolicy="no-referrer" />}
+          {hasAfter &&           <img className="sf-fx-after" src={secondary} alt={secondaryAlt || ''} referrerPolicy="no-referrer" onError={() => setFailed(true)} />}
         </div>
       </div>
     </div>
@@ -256,9 +262,12 @@ export function BlockRenderer({
   onCommitText,
   previewMode = false,
   layoutMode,
+  navbarConfig = DEFAULT_NAVBAR_CONFIG,
+  onNavigatePage,
 }: BlockRendererProps) {
   const [openFaqIdx, setOpenFaqIdx] = useState<number>(0);
   const [contactSent, setContactSent] = useState<boolean>(false);
+  const [navOpen, setNavOpen] = useState(false);
 
   const p = theme.palette;
   const primary = sanitizeColor(block.styleOverride?.accentColor || p.primary, '#1B4332');
@@ -304,20 +313,25 @@ export function BlockRenderer({
         return (
           <header
             style={{
-              backgroundColor: bg,
-              borderBottom: `${borderWidth} solid ${borderCol}`,
+              backgroundColor: `color-mix(in srgb, ${bg} ${navbarConfig.opacity}%, transparent)`,
+              borderBottom: `${borderWidth} solid color-mix(in srgb, ${borderCol} ${navbarConfig.borderOpacity}%, transparent)`,
               color: text,
               fontFamily: bodyFont,
-            }}
-            className="px-6 py-4"
+              backdropFilter: `blur(${navbarConfig.blurPx}px) saturate(185%)`,
+              WebkitBackdropFilter: `blur(${navbarConfig.blurPx}px) saturate(185%)`,
+              borderRadius: navbarConfig.borderRadiusPx,
+              '--nav-bg': `color-mix(in srgb, ${bg} ${navbarConfig.opacity}%, transparent)`,
+              '--nav-blur': `${navbarConfig.blurPx}px`,
+              '--nav-radius': `${navbarConfig.borderRadiusPx}px`,
+              '--nav-border': `color-mix(in srgb, ${borderCol} ${navbarConfig.borderOpacity}%, transparent)`,
+            } as React.CSSProperties}
+            className={`sf-navbar-preview px-6 py-4 ${navbarConfig.variant === 'floating-pill' ? 'sf-navbar-pill' : navbarConfig.variant === 'floating-wide' ? 'sf-navbar-wide' : navbarConfig.variant === 'sidebar-drawer' ? 'sf-navbar-drawer' : ''}`}
           >
             <div className="max-w-6xl mx-auto flex items-center justify-between gap-6">
               {block.variant === 'centered' && !isMobile && (
                 <nav className="hidden md:flex items-center gap-5 text-sm" style={{ color: muted }}>
                   {items.slice(0, 2).map((it) => (
-                    <span key={it.id} className="whitespace-nowrap">
-                      {it.title}
-                    </span>
+                    <a key={it.id} href={it.linkHref || '#'} onClick={(e) => { if (it.linkHref?.startsWith('#page-')) { e.preventDefault(); onNavigatePage?.(it.linkHref.slice(6)); } else if (it.linkHref?.startsWith('#')) { e.preventDefault(); document.querySelector(it.linkHref)?.scrollIntoView({ behavior: 'smooth' }); } }} className="whitespace-nowrap text-inherit no-underline">{it.title}</a>
                   ))}
                 </nav>
               )}
@@ -329,9 +343,7 @@ export function BlockRenderer({
               {block.variant !== 'minimal' && !isMobile && (
                 <nav className="hidden md:flex items-center gap-6 text-sm" style={{ color: muted }}>
                   {(block.variant === 'centered' ? items.slice(2, 4) : items).map((it) => (
-                    <span key={it.id} className="whitespace-nowrap">
-                      {it.title}
-                    </span>
+                    <a key={it.id} href={it.linkHref || '#'} onClick={(e) => { if (it.linkHref?.startsWith('#page-')) { e.preventDefault(); onNavigatePage?.(it.linkHref.slice(6)); } else if (it.linkHref?.startsWith('#')) { e.preventDefault(); document.querySelector(it.linkHref)?.scrollIntoView({ behavior: 'smooth' }); } }} className="whitespace-nowrap text-inherit no-underline">{it.title}</a>
                   ))}
                 </nav>
               )}
@@ -349,7 +361,28 @@ export function BlockRenderer({
                   <TodoText value={c.ctaLabel} field="ctaLabel" />
                 </span>
               )}
+              {items.length > 0 && (
+                <button
+                  type="button"
+                  aria-expanded={navOpen}
+                  aria-label={navOpen ? 'Fermer le menu' : 'Ouvrir le menu'}
+                  onClick={() => setNavOpen((open) => !open)}
+                  className="sf-nav-toggle-preview md:hidden p-2 rounded-sm border border-current/20"
+                >
+                  {navOpen ? <X className="w-5 h-5" aria-hidden="true" /> : <Menu className="w-5 h-5" aria-hidden="true" />}
+                </button>
+              )}
             </div>
+            {navOpen && (
+              <>
+                <button type="button" aria-label="Fermer le menu" onClick={() => setNavOpen(false)} className="fixed inset-0 z-30 bg-black/30 backdrop-blur-sm md:hidden" />
+                <nav aria-label="Navigation mobile" className="absolute z-40 left-3 right-3 top-full mt-2 p-4 space-y-3 rounded-xl border border-white/30 bg-white/80 text-[#1C1917] shadow-xl backdrop-blur-2xl md:hidden">
+                  {items.map((item) => (
+                    <a key={item.id} href={item.linkHref || '#'} onClick={(e) => { setNavOpen(false); if (item.linkHref?.startsWith('#page-')) { e.preventDefault(); onNavigatePage?.(item.linkHref.slice(6)); } else if (item.linkHref?.startsWith('#')) { e.preventDefault(); document.querySelector(item.linkHref)?.scrollIntoView({ behavior: 'smooth' }); } }} className="block py-2 text-sm font-medium">{item.title}</a>
+                  ))}
+                </nav>
+              </>
+            )}
           </header>
         );
 
@@ -1296,14 +1329,24 @@ export function BlockRenderer({
       data-block-id={block.id}
       data-anim={block.type !== 'navbar' && sanitizeSectionAnimation(block.animation) !== 'none' ? sanitizeSectionAnimation(block.animation) : undefined}
       data-story={layoutMode === 'scroll-story' && block.type !== 'navbar' && block.type !== 'footer' ? '' : undefined}
-      style={{ '--sf-anim-ms': `${clampDuration(block.animationDurationMs)}ms` } as React.CSSProperties}
+      style={{
+        '--sf-anim-ms': `${clampDuration(block.animationDurationMs)}ms`,
+        '--glass-opacity': `${(block.styleOverride?.opacity ?? 22) / 100}`,
+        '--glass-blur': `${block.styleOverride?.blurPx ?? 24}px`,
+        '--glass-border-opacity': `${(block.styleOverride?.opacity ?? 38) / 100}`,
+        ...parseSafeBlockCss(block.styleOverride?.customCss),
+        ...(block.styleOverride?.backgroundGradient ? { background: block.styleOverride.backgroundGradient } : {}),
+        ...(block.styleOverride?.paddingY !== undefined ? { paddingBlock: `${block.styleOverride.paddingY}px` } : {}),
+        ...(block.styleOverride?.borderRadius !== undefined ? { borderRadius: `${block.styleOverride.borderRadius}px` } : {}),
+        ...(block.styleOverride?.shadowDepth !== undefined ? { boxShadow: `0 ${block.styleOverride.shadowDepth}px ${block.styleOverride.shadowDepth * 2}px rgba(15,23,42,.18)` } : {}),
+      } as React.CSSProperties}
       className={`relative group transition-shadow ${
         previewMode
           ? ''
           : isSelected
             ? 'ring-2 ring-[#9A3412] ring-inset'
             : 'hover:ring-1 hover:ring-[#9A3412]/50 hover:ring-inset'
-      } ${!block.visible ? 'opacity-45' : ''}`}
+      } ${!block.visible ? 'opacity-45' : ''} ${(block.styleOverride?.glassMode || theme.liquidGlass) ? 'sf-liquid-glass' : ''}`}
     >
       <InlineEditProvider value={{ enabled: !previewMode && Boolean(onCommitText), commit: onCommitText ?? (() => {}) }}>
       {!previewMode && onDragStartBlock && (

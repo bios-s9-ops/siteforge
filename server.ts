@@ -8,6 +8,7 @@ import {
   generateSeoAndAlts,
   generateSiteProposals,
   mapGeminiError,
+  mutateSiteWithAI,
   regenerateSingleBlock,
   rewriteTextSnippet,
   suggestPalettesAndFonts,
@@ -66,6 +67,18 @@ async function startServer() {
       const { mode, imageDataUrl, url, description } = req.body ?? {};
       const analysis = await analyzeTemplateStructure({ mode, imageDataUrl, url, description });
       res.json({ analysis });
+    }),
+  );
+
+  app.post(
+    '/api/ai/mutate',
+    route(async (req, res) => {
+      const { userPrompt, activePageId, selectedBlockId, projectSnapshot } = req.body ?? {};
+      if (typeof userPrompt !== 'string' || !projectSnapshot || !Array.isArray(projectSnapshot.blocks)) {
+        res.status(400).json({ error: 'Requête de modification incomplète.', code: 'BAD_REQUEST' });
+        return;
+      }
+      res.json(await mutateSiteWithAI({ userPrompt, activePageId, selectedBlockId, projectSnapshot }));
     }),
   );
 

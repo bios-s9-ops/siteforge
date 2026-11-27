@@ -2,12 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHistory, pushHistory, undoHistory, redoHistory, canUndo, canRedo } from './history';
 import {
+  createMultiPageTemplate,
   createStarterProject,
   duplicateBlockInList,
   insertBlockInList,
   moveBlockInList,
   reorderBlocksByIds,
 } from './demoSites';
+import { applySiteMutations } from './aiMutations';
 import { BLOCK_CATALOG } from './blockCatalog';
 import { escapeHtml, getContrastTextColor, sanitizeColor, sanitizeUrl } from './validation';
 import { generateSeparateHtmlAndCss, generateSiteCss, generateStandaloneHtml } from './exporter';
@@ -103,6 +105,25 @@ test('les opérations sur les blocs (monter, descendre, glisser, dupliquer, ins�
   assert.equal(inserted.length, project.blocks.length + 1);
   assert.equal(inserted[inserted.length - 1].type, 'footer');
   assert.equal(inserted[inserted.length - 2].id, newBlock.id);
+});
+
+test('les modèles multi-pages et les mutations IA conservent la page active', () => {
+  const project = createMultiPageTemplate('apparel');
+  assert.equal(project.pages?.length, 5);
+  assert.equal(project.activePageId, project.pages?.[0].id);
+
+  const updated = applySiteMutations(project, [
+    { type: 'UPDATE_NAVBAR', patch: { variant: 'floating-pill', opacity: 35 } },
+    {
+      type: 'ADD_PAGE',
+      page: { id: 'page-test', title: 'Journal', slug: 'journal', blocks: [] },
+    },
+  ]);
+  assert.equal(updated.settings?.navbar?.variant, 'floating-pill');
+  assert.equal(updated.settings?.navbar?.opacity, 35);
+  assert.equal(updated.pages?.length, 6);
+  assert.equal(updated.activePageId, project.activePageId);
+  assert.equal(updated.blocks[0].id, project.blocks[0].id);
 });
 
 test('les fonctions de sécurité bloquent les URLs javascript: et échappent le HTML', () => {

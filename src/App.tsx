@@ -1,17 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { EditorWorkspace } from './components/EditorWorkspace';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { WizardFlow } from './components/WizardFlow';
 import type { SiteProject } from './types/site';
 import {
   createStarterProject,
+  createMultiPageTemplate,
   loadSavedProjects,
   saveAllProjects,
   upsertProjectInList,
 } from './utils/demoSites';
 import { ProposalsFlow } from './components/ProposalsFlow';
 import { useHistoryShortcuts, useProjectHistory } from './hooks/useProjectHistory';
-import { clearAllImages, createBlankProject, ForgeFileError, parseForgeFile } from './utils/projectIO';
+import { clearAllImages, createBlankProject, ForgeFileError, normalizeProjectPages, parseForgeFile } from './utils/projectIO';
+import { AICopilotDrawer } from './components/AICopilotDrawer';
+import { applySiteMutations } from './utils/aiMutations';
 
 type AppScreen = 'welcome' | 'wizard' | 'ai' | 'editor';
 
@@ -26,6 +29,8 @@ export default function App() {
   const [wizardMode, setWizardMode] = useState<'inspiration' | 'scratch'>('scratch');
   const [importError, setImportError] = useState('');
   const history = useProjectHistory(() => loadSavedProjects()[0] ?? createStarterProject('kora'));
+  const [aiOpen, setAiOpen] = useState(false);
+  const aiUndoStack = useRef<SiteProject[]>([]);
   useHistoryShortcuts(screen === 'editor', history.undo, history.redo);
 
   // Réinitialise le défilement de la fenêtre lors des changements d'écran
@@ -44,22 +49,41 @@ export default function App() {
   }, [history.present, screen]);
 
   const openProjectInEditor = (project: SiteProject) => {
-    history.reset(project);
+    history.reset(normalizeProjectPages(project));
     setScreen('editor');
   };
 
   const saveAndOpen = (project: SiteProject) => {
-    const nextList = upsertProjectInList(savedProjects, project);
+    const ready = normalizeProjectPages(project);
+    const nextList = upsertProjectInList(savedProjects, ready);
     setSavedProjects(nextList);
     saveAllProjects(nextList);
-    openProjectInEditor(project);
+    openProjectInEditor(ready);
   };
+
+  const handleAiChange = (_prompt: string, mutations: Parameters<typeof applySiteMutations>[1]) => {
+    aiUndoStack.current.push(history.present);
+    history.push(applySiteMutations(history.present, mutations));
+    setScreen('editor');
+  };
+
+  const handleAiUndo = () => {
+    const previous = aiUndoStack.current.pop();
+    if (previous) history.push(previous);
+  };
+
+  useEffect(() => {
+    const open = () => setAiOpen(true);
+    window.addEventListener('siteforge:open-ai', open);
+    return () => window.removeEventListener('siteforge:open-ai', open);
+  }, []);
 
   const handleStartMode = (mode: 'inspiration' | 'scratch' | 'ai') => {
     setImportError('');
     if (mode === 'scratch') {
       // Canevas vierge : aucune section, aucune image, aucun texte imposé
       saveAndOpen(createBlankProject());
+      setAiOpen(true);
       return;
     }
     if (mode === 'ai') {
@@ -79,8 +103,10 @@ export default function App() {
     }
   };
 
-  const handleOpenStarter = (preset: 'kora' | 'seve') => {
-    const starter = createStarterProject(preset);
+  const handleOpenStarter = (preset: 'kora' | 'seve' | 'apparel' | 'portfolio' | 'agency') => {
+    const starter = preset === 'kora' || preset === 'seve'
+      ? createStarterProject(preset)
+      : createMultiPageTemplate(preset);
     const nextList = upsertProjectInList(savedProjects, starter);
     setSavedProjects(nextList);
     saveAllProjects(nextList);
@@ -109,8 +135,9 @@ export default function App() {
     saveAllProjects(nextList);
   };
 
+  let content;
   if (screen === 'wizard') {
-    return (
+    content = (
       <WizardFlow
         mode={wizardMode}
         onCancel={() => setScreen('welcome')}
@@ -120,27 +147,22 @@ export default function App() {
         }}
       />
     );
-  }
-
-  if (screen === 'ai') {
-    return <ProposalsFlow onCancel={() => setScreen('welcome')} onChoose={saveAndOpen} />;
-  }
-
-  if (screen === 'editor') {
-    return (
+  } else if (screen === 'ai') {
+    content = <ProposalsFlow onCancel={() => setScreen('welcome')} onChoose={saveAndOpen} />;
+  } else if (screen === 'editor') {
+    content = (
       <EditorWorkspace
         project={history.present}
         canUndo={history.canUndo}
         canRedo={history.canRedo}
         onUndo={history.undo}
         onRedo={history.redo}
-        onChangeProject={history.push}
+        onChangeProject={(next) => history.push(normalizeProjectPages(next))}
         onBackHome={() => setScreen('welcome')}
       />
     );
-  }
-
-  return (
+  } else {
+    content = (
     <WelcomeScreen
       savedProjects={savedProjects}
       onStartMode={handleStartMode}
@@ -151,5 +173,19 @@ export default function App() {
       onDuplicateProject={handleDuplicateProject}
       onDeleteProject={handleDeleteProject}
     />
+  );
+  }
+  return (
+    <>
+      {content}
+      <AICopilotDrawer
+        isOpen={aiOpen}
+        onOpenChange={setAiOpen}
+        project={history.present}
+        onApply={handleAiChange}
+        onUndo={handleAiUndo}
+        canUndo={aiUndoStack.current.length > 0}
+      />
+    </>
   );
 }

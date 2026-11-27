@@ -1,4 +1,4 @@
-import type { BlockType, SiteBlock, SiteProject } from '../types/site';
+import type { BlockType, SiteBlock, SitePage, SiteProject } from '../types/site';
 import { applyArtDirectionToTheme } from './artDirections';
 import { createBlockId, createBlockInstance } from './blockCatalog';
 
@@ -125,6 +125,97 @@ export function createStarterProject(preset: 'kora' | 'seve' = 'kora'): SiteProj
       adjustments: [],
       checkedAt: now,
     },
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export type MultiPageTemplate = 'apparel' | 'portfolio' | 'agency';
+
+export function createMultiPageTemplate(template: MultiPageTemplate): SiteProject {
+  const names: Record<MultiPageTemplate, string> = {
+    apparel: 'Maison Fil — Boutique',
+    portfolio: 'Studio Clair — Portfolio',
+    agency: 'Atelier Nord — Créatif',
+  };
+  const siteName = names[template];
+  const now = new Date().toISOString();
+  const pageSpecs = template === 'apparel'
+    ? [
+        ['Accueil', 'accueil', 'hero', 'Une garde-robe pensée pour durer'],
+        ['Garçons', 'garcons', 'products', 'Les essentiels pour garçons'],
+        ['Filles', 'filles', 'products', 'Les essentiels pour filles'],
+        ['Accessoires', 'accessoires', 'products', 'Petites pièces, grand usage'],
+        ['Contact', 'contact', 'cta', 'Une question sur une pièce ?'],
+      ] as const
+    : template === 'portfolio'
+      ? [
+          ['Accueil', 'accueil', 'hero', 'Des images qui racontent un lieu'],
+          ['Projets', 'projets', 'gallery', 'Sélection de projets'],
+          ['À propos', 'a-propos', 'about', 'Un studio indépendant'],
+          ['Contact', 'contact', 'cta', 'Parlons de votre projet'],
+        ] as const
+      : [
+          ['Accueil', 'accueil', 'hero', 'Des idées claires, des marques vivantes'],
+          ['Identité', 'identite', 'services', 'Stratégie et identité'],
+          ['Projets', 'projets', 'gallery', 'Travaux choisis'],
+          ['Studio', 'studio', 'about', 'Un atelier de création'],
+          ['Contact', 'contact', 'cta', 'Construisons la suite'],
+        ] as const;
+
+  const pages: SitePage[] = pageSpecs.map(([title, slug, bodyType, heading]) => {
+    const navbar = createBlockInstance('navbar', siteName, 'inline');
+    navbar.content.items = pageSpecs.map(([navTitle, navSlug]) => ({
+      id: createBlockId('nav'),
+      title: navTitle,
+      linkHref: `#page-${navSlug}`,
+    }));
+    const hero = createBlockInstance('hero', siteName, 'centered');
+    hero.content = {
+      ...hero.content,
+      kicker: title === 'Accueil' ? 'Collection indépendante · Exemple fictif' : title,
+      heading,
+      subheading: 'Une sélection attentive, des matières choisies et des détails faits pour accompagner le quotidien.',
+      ctaLabel: title === 'Accueil' ? 'Découvrir les collections' : 'Nous écrire',
+      ctaHref: '#page-contact',
+    };
+    const content = createBlockInstance(bodyType, siteName);
+    if (bodyType === 'products') {
+      content.content.heading = heading;
+      content.content.subheading = 'Les références, tailles et tarifs restent à confirmer par la boutique.';
+      content.content.items = ['Modèle Atelier', 'Modèle Quotidien', 'Modèle Signature'].map((product, index) => ({
+        id: createBlockId('prd'),
+        title: `${product} ${index + 1}`,
+        price: 'À compléter',
+        description: 'Matière et dimensions à préciser.',
+        linkLabel: 'Demander la disponibilité',
+        linkHref: '#page-contact',
+      }));
+    } else {
+      content.content.heading = heading;
+    }
+    const footer = createBlockInstance('footer', siteName, 'multi-column');
+    const blocks = [navbar, hero, ...(bodyType !== 'hero' ? [content] : []), footer];
+    return { id: `page_${slug}`, title, slug, blocks };
+  });
+
+  const project = createStarterProject('seve');
+  const firstPage = pages[0];
+  return {
+    ...project,
+    id: `prj_${Math.random().toString(36).slice(2, 9)}`,
+    name: siteName,
+    seoTitle: `${siteName} · Exemple fictif`,
+    seoDescription: 'Modèle SiteForge multi-page à personnaliser avec vos informations vérifiées.',
+    theme: {
+      ...project.theme,
+      liquidGlass: template === 'portfolio',
+      artDirection: template === 'portfolio' ? 'minimal_luxe' : template === 'agency' ? 'editorial' : 'artisanal',
+    },
+    blocks: firstPage.blocks,
+    pages,
+    activePageId: firstPage.id,
+    isDemo: true,
     createdAt: now,
     updatedAt: now,
   };

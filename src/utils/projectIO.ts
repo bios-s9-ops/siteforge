@@ -1,4 +1,4 @@
-import type { BlockContent, BlockItem, ProjectInput, SiteBlock, SiteProject, StructureAnalysis } from '../types/site';
+import type { BlockContent, BlockItem, FormProvider, NavbarConfig, ProjectInput, SiteBlock, SitePage, SiteProject, StructureAnalysis } from '../types/site';
 import { BLOCK_CATALOG } from './blockCatalog';
 import { applyArtDirectionToTheme, pickArtDirectionFromMood } from './artDirections';
 import { normalizeHex } from './colorHarmony';
@@ -11,6 +11,7 @@ import {
   sanitizeSectionAnimation,
 } from './effectsCatalog';
 import { sanitizeUrl } from './validation';
+import { DEFAULT_NAVBAR_CONFIG } from './siteSettings';
 
 const newId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
 
@@ -37,6 +38,30 @@ export function createBlankProject(name = 'Nouveau site'): SiteProject {
     createdAt: now,
     updatedAt: now,
   };
+}
+
+export function normalizeProjectPages(project: SiteProject): SiteProject {
+  const pages = project.pages?.length
+    ? project.pages
+    : [{ id: `${project.id}-home`, title: 'Accueil', slug: 'accueil', blocks: project.blocks }];
+  const hasActivePage = pages.some((page) => page.id === project.activePageId);
+  const activePageId = hasActivePage ? project.activePageId! : pages[0].id;
+  const activePage = pages.find((page) => page.id === activePageId)!;
+  const blocks = hasActivePage ? project.blocks : activePage.blocks;
+  return {
+    ...project,
+    pages: pages.map((page) => page.id === activePageId ? { ...page, blocks } : page),
+    activePageId,
+    blocks,
+  };
+}
+
+export function switchProjectPage(project: SiteProject, pageId: string): SiteProject {
+  const currentId = project.activePageId;
+  const pages = (project.pages ?? []).map((page) => page.id === currentId ? { ...page, blocks: project.blocks } : page);
+  const target = pages.find((page) => page.id === pageId);
+  if (!target) return project;
+  return { ...project, pages, activePageId: pageId, blocks: target.blocks };
 }
 
 /** Vide tous les emplacements d'image (blocs et éléments) en gardant les effets déjà réglés. */
@@ -107,6 +132,10 @@ export class ForgeFileError extends Error {}
 
 const isObj = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const str = (v: unknown, max = 4000): string | undefined => (typeof v === 'string' ? v.slice(0, max) : undefined);
+const clampRange = (value: unknown, min: number, max: number, fallback: number): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.round(parsed))) : fallback;
+};
 
 function cleanImage(v: unknown): string | undefined {
   if (typeof v !== 'string') return undefined;
@@ -175,6 +204,39 @@ export function parseForgeFile(text: string): SiteProject {
   }
   const fonts = isObj(t.fonts) ? t.fonts : {};
   const now = new Date().toISOString();
+  const importedBlocks = (p.blocks as unknown[]).map(cleanBlock).filter((b): b is SiteBlock => b !== null).slice(0, 80);
+  const importedPages: SitePage[] = Array.isArray(p.pages)
+    ? p.pages.flatMap((raw, index) => {
+        if (!isObj(raw)) return [];
+        const title = str(raw.title, 120) || `Page ${index + 1}`;
+        const slug = (str(raw.slug, 80) || title).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '') || `page-${index + 1}`;
+        const blocks = Array.isArray(raw.blocks)
+          ? raw.blocks.map(cleanBlock).filter((b): b is SiteBlock => b !== null).slice(0, 80)
+          : [];
+        return [{ id: str(raw.id, 80) || newId('page'), title, slug, blocks }];
+      })
+    : [];
+  const pages = importedPages.length ? importedPages : [{ id: newId('page'), title: 'Accueil', slug: 'accueil', blocks: importedBlocks }];
+  const activePageId = pages.some((page) => page.id === p.activePageId) ? String(p.activePageId) : pages[0].id;
+  const activePage = pages.find((page) => page.id === activePageId)!;
+  const rawSettings = isObj(p.settings) ? p.settings : {};
+  const rawNavbar = isObj(rawSettings.navbar) ? rawSettings.navbar : {};
+  const navbar: NavbarConfig = {
+    ...DEFAULT_NAVBAR_CONFIG,
+    variant: ['sticky-full', 'floating-pill', 'floating-wide', 'sidebar-drawer'].includes(String(rawNavbar.variant))
+      ? rawNavbar.variant as NavbarConfig['variant']
+      : DEFAULT_NAVBAR_CONFIG.variant,
+    opacity: clampRange(rawNavbar.opacity, 0, 100, DEFAULT_NAVBAR_CONFIG.opacity),
+    blurPx: clampRange(rawNavbar.blurPx, 0, 32, DEFAULT_NAVBAR_CONFIG.blurPx),
+    borderRadiusPx: clampRange(rawNavbar.borderRadiusPx, 0, 999, DEFAULT_NAVBAR_CONFIG.borderRadiusPx),
+    borderOpacity: clampRange(rawNavbar.borderOpacity, 0, 100, DEFAULT_NAVBAR_CONFIG.borderOpacity),
+    shrinkOnScroll: rawNavbar.shrinkOnScroll === true,
+    autoHideOnScrollDown: rawNavbar.autoHideOnScrollDown === true,
+    activeIndicator: ['pill', 'underline', 'glow', 'none'].includes(String(rawNavbar.activeIndicator))
+      ? rawNavbar.activeIndicator as NavbarConfig['activeIndicator']
+      : DEFAULT_NAVBAR_CONFIG.activeIndicator,
+  };
+  const formProviders: FormProvider[] = ['none', 'formsubmit', 'web3forms', 'formspree', 'netlify', 'mailto', 'whatsapp'];
   return {
     ...(p as unknown as SiteProject),
     id: newId('prj'),
@@ -196,7 +258,18 @@ export function parseForgeFile(text: string): SiteProject {
       headerStyle: sanitizeHeaderStyle(t.headerStyle),
       visitorThemeToggle: t.visitorThemeToggle === true,
     },
-    blocks: (p.blocks as unknown[]).map(cleanBlock).filter((b): b is SiteBlock => b !== null).slice(0, 80),
+    blocks: activePage.blocks,
+    pages,
+    activePageId,
+    settings: {
+      formProvider: formProviders.includes(rawSettings.formProvider as FormProvider) ? rawSettings.formProvider as FormProvider : 'none',
+      formEmail: str(rawSettings.formEmail, 160),
+      formKey: str(rawSettings.formKey, 200),
+      whatsappNumber: str(rawSettings.whatsappNumber, 30),
+      siteUrl: str(rawSettings.siteUrl, 300),
+      successMessage: str(rawSettings.successMessage, 300),
+      navbar,
+    },
     createdAt: now,
     updatedAt: now,
   };

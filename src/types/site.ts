@@ -38,6 +38,19 @@ export type SiteLayoutMode = 'vertical' | 'horizontal-slides' | 'bento-grid' | '
 
 /** Style de la navigation en tête de page (ou latérale). */
 export type HeaderNavStyle = 'classic-bar' | 'floating-glass' | 'vertical-sidebar' | 'minimal-centered' | 'hidden';
+export type NavbarVariant = 'sticky-full' | 'floating-pill' | 'floating-wide' | 'sidebar-drawer';
+export type NavbarActiveIndicator = 'pill' | 'underline' | 'glow' | 'none';
+
+export interface NavbarConfig {
+  variant: NavbarVariant;
+  opacity: number;
+  blurPx: number;
+  borderRadiusPx: number;
+  borderOpacity: number;
+  shrinkOnScroll: boolean;
+  autoHideOnScrollDown: boolean;
+  activeIndicator: NavbarActiveIndicator;
+}
 
 /** Effet d'une image lié au défilement de la page. */
 export type ImageScrollEffect =
@@ -115,12 +128,22 @@ export interface SiteTheme {
   headerStyle?: HeaderNavStyle;
   /** Affiche un bouton clair / sombre pour le visiteur, dans l'aperçu et dans le site exporté */
   visitorThemeToggle?: boolean;
+  liquidGlass?: boolean;
+  customCss?: string;
 }
 
 export interface BlockStyleOverride {
   backgroundColor?: string;
   textColor?: string;
   accentColor?: string;
+  glassMode?: boolean;
+  opacity?: number;
+  blurPx?: number;
+  backgroundGradient?: string;
+  paddingY?: number;
+  borderRadius?: number;
+  shadowDepth?: number;
+  customCss?: string;
 }
 
 export interface BlockItem {
@@ -265,6 +288,7 @@ export type FormProvider = 'none' | 'formsubmit' | 'web3forms' | 'formspree' | '
 
 export interface SiteSettings {
   formProvider: FormProvider;
+  navbar?: NavbarConfig;
   /** Adresse qui reçoit les messages (FormSubmit, mailto). Par défaut : e-mail du bloc contact. */
   formEmail?: string;
   /** Clé d'accès Web3Forms ou identifiant Formspree (partie après /f/). */
@@ -286,11 +310,35 @@ export interface SiteProject {
   settings?: SiteSettings;
   theme: SiteTheme;
   blocks: SiteBlock[];
+  /** Pages du site; `blocks` reste la page active pour compatibilité historique. */
+  pages?: SitePage[];
+  activePageId?: string;
   originalityReport?: OriginalityReport;
   structureAnalysis?: StructureAnalysis;
   projectInput?: ProjectInput;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SitePage {
+  id: string;
+  title: string;
+  slug: string;
+  blocks: SiteBlock[];
+}
+
+export type SiteMutation =
+  | { type: 'UPDATE_NAVBAR'; patch: Partial<NavbarConfig> }
+  | { type: 'SET_GLOBAL_STYLE'; patch: Record<string, unknown> }
+  | { type: 'ADD_PAGE'; page: SitePage }
+  | { type: 'ADD_BLOCK'; pageId: string; index?: number; block: SiteBlock }
+  | { type: 'UPDATE_BLOCK'; pageId: string; blockId: string; patch: Partial<SiteBlock> }
+  | { type: 'DELETE_BLOCK'; pageId: string; blockId: string }
+  | { type: 'APPLY_CUSTOM_CSS'; target: 'global' | string; css: string };
+
+export interface AIMutateResponse {
+  assistantMessage: string;
+  mutations: SiteMutation[];
 }
 
 export interface BlockVariantOption {

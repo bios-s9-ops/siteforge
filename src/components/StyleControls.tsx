@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { HeaderNavStyle, SiteFonts, SiteLayoutMode, SitePalette, SiteTheme } from '../types/site';
+import type { HeaderNavStyle, NavbarConfig, SiteFonts, SiteLayoutMode, SitePalette, SiteTheme } from '../types/site';
 import { generateAllHarmonies, normalizeHex } from '../utils/colorHarmony';
 import { HEADER_STYLES, LAYOUT_MODES } from '../utils/effectsCatalog';
 import { ensureGoogleFontLoaded, FONT_CATALOG, FONT_CATEGORY_LABELS, type FontCategory } from '../utils/fonts';
@@ -226,6 +226,62 @@ export function LayoutControls({ theme, onChange }: { theme: SiteTheme; onChange
           {HEADER_STYLES.find((o) => o.id === (theme.headerStyle ?? 'classic-bar'))?.description} La barre latérale est simplifiée sur la page d’édition : « Tester le site » montre le rendu exact.
         </p>
       </div>
+    </div>
+  );
+}
+
+export function NavbarControls({
+  value,
+  onChange,
+}: {
+  value: NavbarConfig;
+  onChange: (value: NavbarConfig) => void;
+}) {
+  const patch = (next: Partial<NavbarConfig>) => onChange({ ...value, ...next });
+  return (
+    <div className="space-y-3 rounded-sm border border-[#E5DEC9] bg-[#FFFFFF] p-3">
+      <div>
+        <label htmlFor="navbar-variant" className={label}>Style de barre</label>
+        <select id="navbar-variant" value={value.variant} onChange={(e) => patch({ variant: e.target.value as NavbarConfig['variant'] })} className={field}>
+          <option value="sticky-full">Pleine largeur fixe</option>
+          <option value="floating-pill">Capsule flottante</option>
+          <option value="floating-wide">Barre flottante large</option>
+          <option value="sidebar-drawer">Menu tiroir</option>
+        </select>
+      </div>
+      {([
+        ['opacity', 'Opacité', 0, 100, '%'],
+        ['blurPx', 'Flou', 0, 32, 'px'],
+        ['borderRadiusPx', 'Arrondi', 0, 999, 'px'],
+        ['borderOpacity', 'Opacité de bordure', 0, 100, '%'],
+      ] as const).map(([key, title, min, max, unit]) => (
+        <label key={key} className="block text-xs">
+          <span className="flex justify-between font-semibold"><span>{title}</span><span>{value[key]}{unit}</span></span>
+          <input
+            type="range"
+            min={min}
+            max={max}
+            value={value[key]}
+            onChange={(e) => patch({ [key]: Number(e.target.value) })}
+            className="w-full accent-[#9A3412]"
+          />
+        </label>
+      ))}
+      <div>
+        <label htmlFor="navbar-indicator" className={label}>Indicateur du lien actif</label>
+        <select id="navbar-indicator" value={value.activeIndicator} onChange={(e) => patch({ activeIndicator: e.target.value as NavbarConfig['activeIndicator'] })} className={field}>
+          <option value="pill">Pastille</option><option value="underline">Soulignement</option>
+          <option value="glow">Halo</option><option value="none">Aucun</option>
+        </select>
+      </div>
+      <label className="flex items-center gap-2 text-xs">
+        <input type="checkbox" checked={value.shrinkOnScroll} onChange={(e) => patch({ shrinkOnScroll: e.target.checked })} />
+        Réduire au défilement
+      </label>
+      <label className="flex items-center gap-2 text-xs">
+        <input type="checkbox" checked={value.autoHideOnScrollDown} onChange={(e) => patch({ autoHideOnScrollDown: e.target.checked })} />
+        Masquer en descendant
+      </label>
     </div>
   );
 }

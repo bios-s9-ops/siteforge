@@ -12,7 +12,7 @@ import {
   buildSitemapXml,
   faviconDataUri,
 } from './publish';
-import { buildWhatsappUrl, cleanEmail, getSiteSettings, parseSocialLinks, toTelHref } from './siteSettings';
+import { buildWhatsappUrl, cleanEmail, getSiteSettings, parseSafeBlockCss, parseSocialLinks, serializeSafeBlockCss, toTelHref } from './siteSettings';
 import { BENTO_SPANS, EFFECTS_CSS, EFFECTS_RUNTIME_JS } from './effectsRuntime';
 import {
   clampDuration,
@@ -59,7 +59,9 @@ function linkHtml(
   opts: { fallback?: boolean; style?: string; prefill?: string } = {},
 ): string {
   if (!label || !label.trim()) return '';
-  const link = resolveHref(href, ctx.anchors, { fallbackToContact: opts.fallback ?? true });
+  const link = href && /^#page-[a-z0-9-]+$/i.test(href)
+    ? { href, external: false }
+    : resolveHref(href, ctx.anchors, { fallbackToContact: opts.fallback ?? true });
   if (!link) return '';
   const contactAnchor = ctx.anchors.firstByType.get('contact');
   const prefill =
@@ -110,14 +112,14 @@ function mediaHtml(o: MediaOptions): string {
   const extra = o.extraStyle ? ` ${o.extraStyle}` : '';
   const effect = o.effect ? sanitizeImageEffect(o.effect) : null;
   if (!effect || !hasAnyImageEffect(effect)) {
-    return `<img class="${cls}" style="aspect-ratio: ${o.aspect};${extra}" src="${escapeHtml(o.src)}" alt="${alt}" loading="lazy" decoding="async" />`;
+    return `<img class="${cls}" style="aspect-ratio: ${o.aspect};${extra}" src="${escapeHtml(o.src)}" alt="${alt}" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="window.__sfImageError&amp;&amp;window.__sfImageError(this)" />`;
   }
   const hasAfter = effect.effect3d === 'before-after-slider' && Boolean(o.secondary);
   const fx3d = effect.effect3d === 'before-after-slider' && !hasAfter ? 'none' : effect.effect3d;
   const after = hasAfter
-    ? `<img class="sf-media sf-fx-after" src="${escapeHtml(o.secondary as string)}" alt="${escapeHtml(o.secondaryAlt || '')}" loading="lazy" decoding="async" />`
+    ? `<img class="sf-media sf-fx-after" src="${escapeHtml(o.secondary as string)}" alt="${escapeHtml(o.secondaryAlt || '')}" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="window.__sfImageError&amp;&amp;window.__sfImageError(this)" />`
     : '';
-  return `<div class="sf-fx${o.hero ? ' sf-hero-media' : ''}" data-fx-scroll="${effect.scroll}" data-fx-scroll-i="${effect.scrollIntensity}" data-fx-3d="${fx3d}" data-fx-3d-i="${effect.effect3dIntensity}" style="aspect-ratio: ${o.aspect}; --k3: ${(effect.effect3dIntensity / 100).toFixed(2)}; --ks: ${(effect.scrollIntensity / 100).toFixed(2)};${extra}"><div class="sf-fx-3d"><div class="sf-fx-inner"><img class="sf-media" src="${escapeHtml(o.src)}" alt="${alt}" loading="lazy" decoding="async" />${after}</div></div></div>`;
+  return `<div class="sf-fx${o.hero ? ' sf-hero-media' : ''}" data-fx-scroll="${effect.scroll}" data-fx-scroll-i="${effect.scrollIntensity}" data-fx-3d="${fx3d}" data-fx-3d-i="${effect.effect3dIntensity}" style="aspect-ratio: ${o.aspect}; --k3: ${(effect.effect3dIntensity / 100).toFixed(2)}; --ks: ${(effect.scrollIntensity / 100).toFixed(2)};${extra}"><div class="sf-fx-3d"><div class="sf-fx-inner"><img class="sf-media" src="${escapeHtml(o.src)}" alt="${alt}" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="window.__sfImageError&amp;&amp;window.__sfImageError(this)" />${after}</div></div></div>`;
 }
 
 function getButtonCssVars(theme: SiteTheme): { btnRadius: string; btnShadow: string; borderWidth: string } {
@@ -191,6 +193,13 @@ export function generateSiteCss(project: SiteProject): string {
 }
 ${alternateThemeCss(theme)}
 ${EFFECTS_CSS}
+${theme.customCss ? `:root { ${serializeSafeBlockCss(theme.customCss)} }` : ''}
+body.sf-liquid-glass { isolation: isolate; }
+ .sf-site-page[hidden] { display: none !important; }
+body.sf-liquid-glass::before, body.sf-liquid-glass::after { content:''; position:fixed; z-index:-1; width:min(45vw,36rem); aspect-ratio:1; border-radius:50%; filter:blur(72px); opacity:.25; pointer-events:none; }
+body.sf-liquid-glass::before { top:8%; left:3%; background:radial-gradient(circle,#f59e0b,transparent 70%); }
+body.sf-liquid-glass::after { top:38%; right:2%; background:radial-gradient(circle,#60a5fa,transparent 70%); }
+[data-glass="true"] > section { background-color:transparent !important; }
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -317,9 +326,22 @@ a {
   position: sticky;
   top: 0;
   z-index: 40;
-  background-color: var(--sf-surface);
-  border-bottom: var(--sf-border-width) solid var(--sf-border);
+  background-color: var(--nav-bg, color-mix(in srgb, var(--sf-surface) 96%, transparent));
+  border-bottom: var(--sf-border-width) solid var(--nav-border, var(--sf-border));
+  -webkit-backdrop-filter: blur(var(--nav-blur, 16px)) saturate(185%);
+  backdrop-filter: blur(var(--nav-blur, 16px)) saturate(185%);
+  transition: padding .25s ease, transform .3s ease, opacity .25s ease, border-radius .25s ease;
 }
+.sf-navbar[data-nav-shrink="true"] { transition: min-height .25s ease, transform .3s ease, opacity .25s ease; }
+.sf-navbar.sf-nav-floating-pill { width: min(1120px, calc(100% - 32px)); margin: 12px auto; border: 1px solid var(--nav-border); border-radius: var(--nav-radius); box-shadow: 0 10px 32px rgba(0,0,0,.12); }
+.sf-navbar.sf-nav-floating-wide { width: calc(100% - 40px); margin: 12px 20px; border: 1px solid var(--nav-border); border-radius: var(--nav-radius); }
+.sf-navbar.sf-nav-shrunk .sf-navbar-inner { min-height: 54px; }
+.sf-navbar.sf-nav-hidden { transform: translateY(-120%); }
+.sf-navbar.sf-nav-active-pill .sf-nav-link[aria-current="page"] { background: color-mix(in srgb, var(--sf-primary) 14%, transparent); border-radius: 999px; padding: .45rem .8rem; }
+.sf-navbar.sf-nav-active-underline .sf-nav-link[aria-current="page"] { text-decoration: underline; text-decoration-color: var(--sf-primary); text-underline-offset: 6px; }
+.sf-navbar.sf-nav-active-glow .sf-nav-link[aria-current="page"] { color: var(--sf-text); text-shadow: 0 0 14px color-mix(in srgb, var(--sf-primary) 50%, transparent); }
+.sf-nav-backdrop { position: fixed; inset: 0; z-index: 38; background: rgba(15,23,42,.32); backdrop-filter: blur(5px); opacity: 0; visibility: hidden; transition: opacity .25s ease, visibility .25s ease; }
+.sf-nav-backdrop.is-open { opacity: 1; visibility: visible; }
 
 .sf-navbar-inner {
   display: flex;
@@ -629,20 +651,32 @@ select.sf-input {
     display: none;
   }
   .sf-nav-panel {
-    display: none;
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
+    display: flex;
+    position: fixed;
+    top: 76px;
+    left: 12px;
+    right: 12px;
+    z-index: 39;
     flex-direction: column;
     align-items: stretch;
     gap: 1rem;
     padding: 1rem 1.5rem 1.5rem;
     background-color: var(--sf-nav-bg, var(--sf-surface));
     border-bottom: var(--sf-border-width) solid var(--sf-border);
+    border-radius: var(--nav-radius, 24px);
+    box-shadow: 0 24px 64px rgba(0,0,0,.18);
+    backdrop-filter: blur(max(18px, var(--nav-blur,16px))) saturate(185%);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-8px);
+    transition: opacity .22s ease, transform .22s ease, visibility .22s ease;
+    pointer-events: none;
   }
   .sf-nav-panel.is-open {
-    display: flex;
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+    pointer-events: auto;
   }
   .sf-nav-links {
     flex-direction: column;
@@ -695,7 +729,10 @@ function renderBlockToHtml(
   const animAttr = animType !== 'none' ? ` data-anim="${animType}"` : '';
   const storyAttr =
     theme.layoutMode === 'scroll-story' && block.type !== 'navbar' && block.type !== 'footer' ? ' data-story' : '';
-  const sectionStyle = `${animAttr}${storyAttr} style="--sf-anim-ms: ${clampDuration(block.animationDurationMs)}ms; background-color: ${bgRef}; color: ${textRef}"`;
+  const override = block.styleOverride;
+  const glassAttrs = theme.liquidGlass || override?.glassMode ? ' data-glass="true"' : '';
+  const customStyle = serializeSafeBlockCss(override?.customCss);
+  const sectionStyle = `${animAttr}${storyAttr}${glassAttrs} style="--sf-anim-ms: ${clampDuration(block.animationDurationMs)}ms; background-color: ${bgRef}; color: ${textRef}; --glass-opacity:${Math.max(0, Math.min(100, override?.opacity ?? 22)) / 100}; --glass-blur:${Math.max(0, Math.min(32, override?.blurPx ?? 24))}px; --glass-border-opacity:.38;${override?.backgroundGradient && /^linear-gradient\\([\\w\\s,#.%()-]+\\)$/i.test(override.backgroundGradient) ? `background:${escapeHtml(override.backgroundGradient)};` : ''}${override?.paddingY !== undefined ? `padding-block:${Math.max(0, Math.min(160, override.paddingY))}px;` : ''}${override?.borderRadius !== undefined ? `border-radius:${Math.max(0, Math.min(999, override.borderRadius))}px;` : ''}${override?.shadowDepth !== undefined ? `box-shadow:0 ${Math.max(0, Math.min(48, override.shadowDepth))}px ${Math.max(0, Math.min(96, override.shadowDepth * 2))}px rgba(15,23,42,.18);` : ''}${customStyle ? `${customStyle};` : ''}"`;
   const cardBgStyle = `background-color: ${escapeHtml(cssColorRef(colors.cardBg, theme.palette, theme.palette.surface))};`;
   const anchorId = anchors.byBlockId.get(block.id) ?? block.id;
 
@@ -712,12 +749,19 @@ function renderBlockToHtml(
       const hasMenu = Boolean(linksHtml);
       const navBg = escapeHtml(cssColorRef(colors.bg, theme.palette, theme.palette.surface));
       const navText = escapeHtml(cssColorRef(colors.text, theme.palette, theme.palette.text));
-      return `<header class="sf-navbar" style="background-color: ${navBg}; color: ${navText}; --sf-nav-bg: ${navBg}">
+      const nav = getSiteSettings(project).navbar;
+      const variantClass = nav?.variant === 'floating-pill' ? 'sf-nav-floating-pill' : nav?.variant === 'floating-wide' ? 'sf-nav-floating-wide' : '';
+      const indicatorClass = `sf-nav-active-${nav?.activeIndicator ?? 'underline'}`;
+      const opacity = nav?.opacity ?? 96;
+      const navStyle = `background-color: color-mix(in srgb, ${navBg} ${opacity}%, transparent); color: ${navText}; --sf-nav-bg: color-mix(in srgb, ${navBg} ${opacity}%, transparent); --nav-bg: color-mix(in srgb, ${navBg} ${opacity}%, transparent); --nav-blur: ${nav?.blurPx ?? 16}px; --nav-radius: ${nav?.borderRadiusPx ?? 24}px; --nav-border: color-mix(in srgb, ${navText} ${nav?.borderOpacity ?? 20}%, transparent);`;
+      const currentPage = project.pages?.find((page) => page.id === project.activePageId);
+      const navPanelId = `sf-nav-panel-${escapeHtml(currentPage?.slug || 'home')}`;
+      return `<header class="sf-navbar ${variantClass} ${indicatorClass}" data-nav-shrink="${nav?.shrinkOnScroll !== false}" data-nav-autohide="${nav?.autoHideOnScrollDown === true}" style="${navStyle}">
   <div class="sf-container sf-navbar-inner">
     <a class="sf-brand" href="#top">${escapeHtml(c.brandName || 'Mon Site')}</a>
     ${
       hasMenu
-        ? `<nav class="sf-nav-panel" id="sf-nav-panel" aria-label="Navigation principale">
+        ? `<nav class="sf-nav-panel" id="${navPanelId}" aria-label="Navigation principale">
       <div class="sf-nav-links">${linksHtml}</div>
       ${cta ? `<div class="sf-nav-cta-mobile">${cta}</div>` : ''}
     </nav>`
@@ -726,7 +770,7 @@ function renderBlockToHtml(
     ${cta ? `<div class="sf-nav-cta">${cta}</div>` : ''}
     ${
       hasMenu
-        ? `<button type="button" class="sf-nav-toggle" aria-expanded="false" aria-controls="sf-nav-panel" data-nav-toggle><span class="sf-sr-only">Ouvrir ou fermer le menu</span><span class="sf-burger" aria-hidden="true"></span></button>`
+        ? `<button type="button" class="sf-nav-toggle" aria-expanded="false" aria-controls="${navPanelId}" data-nav-toggle><span class="sf-sr-only">Ouvrir ou fermer le menu</span><span class="sf-burger" aria-hidden="true"></span></button>`
         : ''
     }
   </div>
@@ -1130,20 +1174,41 @@ const PAGE_SCRIPT = `(function () {
     });
   });
 
-  var toggle = document.querySelector('[data-nav-toggle]');
-  var panel = document.getElementById('sf-nav-panel');
-  if (toggle && panel) {
+  document.querySelectorAll('.sf-navbar').forEach(function (navbar) {
+    var toggle = navbar.querySelector('[data-nav-toggle]');
+    var panel = navbar.querySelector('.sf-nav-panel');
+    if (!toggle || !panel) return;
+    var backdrop = document.createElement('button');
+    backdrop.type = 'button';
+    backdrop.className = 'sf-nav-backdrop';
+    backdrop.setAttribute('aria-label', 'Fermer le menu');
+    document.body.appendChild(backdrop);
     var setOpen = function (open) {
       toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
       if (open) panel.classList.add('is-open');
       else panel.classList.remove('is-open');
+      if (open) backdrop.classList.add('is-open');
+      else backdrop.classList.remove('is-open');
     };
     toggle.addEventListener('click', function () {
       setOpen(toggle.getAttribute('aria-expanded') !== 'true');
     });
+    backdrop.addEventListener('click', function () { setOpen(false); });
     panel.addEventListener('click', function (event) {
       var target = event.target;
-      if (target && target.closest && target.closest('a')) setOpen(false);
+      var link = target && target.closest && target.closest('a');
+      if (!link) return;
+      setOpen(false);
+      var href = link.getAttribute('href') || '';
+      if (href.charAt(0) === '#' && href.length > 1) {
+        var destination = document.getElementById(decodeURIComponent(href.slice(1)));
+        if (destination) {
+          event.preventDefault();
+          destination.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          panel.querySelectorAll('a').forEach(function (item) { item.removeAttribute('aria-current'); });
+          link.setAttribute('aria-current', 'page');
+        }
+      }
     });
     document.addEventListener('keydown', function (event) {
       if (event.key === 'Escape') setOpen(false);
@@ -1151,6 +1216,39 @@ const PAGE_SCRIPT = `(function () {
     window.addEventListener('resize', function () {
       if (window.innerWidth > 900) setOpen(false);
     });
+  });
+
+  document.addEventListener('click', function (event) {
+    var target = event.target;
+    var link = target && target.closest && target.closest('a[href^="#page-"]');
+    if (!link) return;
+    var slug = link.getAttribute('href').slice(6);
+    var page = document.querySelector('[data-site-page="' + CSS.escape(slug) + '"]');
+    if (!page) return;
+    event.preventDefault();
+    document.querySelectorAll('[data-site-page]').forEach(function (item) { item.hidden = item !== page; });
+    document.querySelectorAll('.sf-nav-panel').forEach(function (panel) { panel.classList.remove('is-open'); });
+    document.querySelectorAll('[data-nav-toggle]').forEach(function (button) { button.setAttribute('aria-expanded', 'false'); });
+    document.querySelectorAll('.sf-nav-backdrop').forEach(function (backdrop) { backdrop.classList.remove('is-open'); });
+    page.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  var navbar = document.querySelector('.sf-navbar');
+  if (navbar) {
+    var previousY = window.scrollY;
+    var queued = false;
+    window.addEventListener('scroll', function () {
+      if (queued) return;
+      queued = true;
+      window.requestAnimationFrame(function () {
+        var y = window.scrollY;
+        navbar.classList.toggle('sf-nav-shrunk', navbar.getAttribute('data-nav-shrink') === 'true' && y > 40);
+        navbar.classList.toggle('sf-nav-hidden', navbar.getAttribute('data-nav-autohide') === 'true' && y > previousY && y > 100);
+        if (y < previousY) navbar.classList.remove('sf-nav-hidden');
+        previousY = y;
+        queued = false;
+      });
+    }, { passive: true });
   }
 })();`;
 
@@ -1210,7 +1308,7 @@ function renderBody(
       const candidate = r.block.content.image || r.block.content.items?.find((it) => it.image)?.image;
       const src = rewriteAssetSrc(candidate);
       if (src) {
-        visual = `<img src="${escapeHtml(src)}" alt="" loading="lazy" decoding="async" />`;
+        visual = `<img src="${escapeHtml(src)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="window.__sfImageError&amp;&amp;window.__sfImageError(this)" />`;
         break;
       }
     }
@@ -1233,15 +1331,31 @@ function renderCredits(project: SiteProject): string {
   return `<p class="sf-credits">Crédits photos : ${credits.map((c) => escapeHtml(c)).join(' · ')}</p>`;
 }
 
-function renderPageBody(project: SiteProject, body: RenderedBody, demoBanner: string, options: PageOptions): string {
+function renderPageContent(project: SiteProject, body: RenderedBody, demoBanner: string): string {
   const main = `<main id="contenu" class="sf-layout" data-layout="${body.layout}">\n${body.main}\n</main>`;
   return `${demoBanner}
   ${body.header}
   ${main}
   ${body.footer}
   ${renderCredits(project)}
-  ${project.theme.visitorThemeToggle ? THEME_TOGGLE_HTML : ''}
-  ${buildInlineScripts(options)}`;
+  ${project.theme.visitorThemeToggle ? THEME_TOGGLE_HTML : ''}`;
+}
+
+function renderProjectPages(
+  project: SiteProject,
+  demoBanner: string,
+  rewriteAssetSrc: (src?: string) => string,
+  options: PageOptions,
+): string {
+  const pages = project.pages?.length
+    ? project.pages
+    : [{ id: project.activePageId ?? 'home', title: 'Accueil', slug: 'accueil', blocks: project.blocks }];
+  const markup = pages.map((page, index) => {
+    const pageProject: SiteProject = { ...project, blocks: page.blocks, activePageId: page.id };
+    const pageBody = renderBody(pageProject, buildAnchorMap(page.blocks), rewriteAssetSrc);
+    return `<div class="sf-site-page" data-site-page="${escapeHtml(page.slug)}"${index ? ' hidden' : ''}>${renderPageContent(pageProject, pageBody, demoBanner)}</div>`;
+  }).join('\n');
+  return `${markup}\n${buildInlineScripts(options)}`;
 }
 
 export function generateStandaloneHtml(project: SiteProject, options: PageOptions = {}): string {
@@ -1250,8 +1364,8 @@ export function generateStandaloneHtml(project: SiteProject, options: PageOption
   const demoBanner = project.isDemo
     ? `<aside class="sf-demo-banner" role="note">${escapeHtml(DEMO_FICTION_BANNER_TEXT)}</aside>`
     : '';
-  const anchors = buildAnchorMap(project.blocks);
-  const body = renderBody(project, anchors, (src) => sanitizeUrl(src, ''));
+  const allBlocks = project.pages?.length ? project.pages.flatMap((page) => page.blocks) : project.blocks;
+  const pages = renderProjectPages(project, demoBanner, (src) => sanitizeUrl(src, ''), options);
 
   return `<!DOCTYPE html>
 <html lang="fr" data-theme="${project.theme.mode === 'dark' ? 'dark' : 'light'}">
@@ -1268,8 +1382,8 @@ export function generateStandaloneHtml(project: SiteProject, options: PageOption
 ${css}
   </style>
 </head>
-<body id="top" data-header="${sanitizeHeaderStyle(project.theme.headerStyle)}">
-  ${renderPageBody(project, body, demoBanner, options)}
+<body id="top" class="${project.theme.liquidGlass ? 'sf-liquid-glass' : ''}" data-header="${sanitizeHeaderStyle(project.theme.headerStyle)}">
+  ${pages}
 </body>
 </html>`;
 }
@@ -1310,8 +1424,8 @@ export function generateSeparateHtmlAndCss(
   const demoBanner = project.isDemo
     ? `<aside class="sf-demo-banner" role="note">${escapeHtml(DEMO_FICTION_BANNER_TEXT)}</aside>`
     : '';
-  const anchors = buildAnchorMap(project.blocks);
-  const body = renderBody(project, anchors, rewriteAssetSrc);
+  const allBlocks = project.pages?.length ? project.pages.flatMap((page) => page.blocks) : project.blocks;
+  const pages = renderProjectPages(project, demoBanner, rewriteAssetSrc, options);
 
   const indexHtml = `<!DOCTYPE html>
 <html lang="fr" data-theme="${project.theme.mode === 'dark' ? 'dark' : 'light'}">
@@ -1326,8 +1440,8 @@ export function generateSeparateHtmlAndCss(
   <link rel="stylesheet" href="${escapeHtml(fontsUrl)}" />
   <link rel="stylesheet" href="style.css" />
 </head>
-<body id="top" data-header="${sanitizeHeaderStyle(project.theme.headerStyle)}">
-  ${renderPageBody(project, body, demoBanner, options)}
+<body id="top" class="${project.theme.liquidGlass ? 'sf-liquid-glass' : ''}" data-header="${sanitizeHeaderStyle(project.theme.headerStyle)}">
+  ${pages}
 </body>
 </html>`;
 
@@ -1366,8 +1480,10 @@ function isLocalAssetPath(value?: string): value is string {
  */
 export async function inlineLocalAssets(project: SiteProject): Promise<SiteProject> {
   const urls = new Set<string>();
-  for (const block of project.blocks) {
+  const allBlocks = [...project.blocks, ...(project.pages ?? []).flatMap((page) => page.blocks)];
+  for (const block of allBlocks) {
     if (isLocalAssetPath(block.content.image)) urls.add(block.content.image);
+    if (isLocalAssetPath(block.content.secondaryImage)) urls.add(block.content.secondaryImage);
     for (const item of block.content.items ?? []) {
       if (isLocalAssetPath(item.image)) urls.add(item.image);
     }
@@ -1392,8 +1508,21 @@ export async function inlineLocalAssets(project: SiteProject): Promise<SiteProje
       content: {
         ...block.content,
         image: swap(block.content.image),
+        secondaryImage: swap(block.content.secondaryImage),
         items: block.content.items?.map((item) => ({ ...item, image: swap(item.image) })),
       },
+    })),
+    pages: project.pages?.map((page) => ({
+      ...page,
+      blocks: page.blocks.map((block) => ({
+        ...block,
+        content: {
+          ...block.content,
+          image: swap(block.content.image),
+          secondaryImage: swap(block.content.secondaryImage),
+          items: block.content.items?.map((item) => ({ ...item, image: swap(item.image) })),
+        },
+      })),
     })),
   };
 }

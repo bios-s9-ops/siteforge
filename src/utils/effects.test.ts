@@ -3,9 +3,18 @@ import assert from 'node:assert/strict';
 import type { SiteBlock, SiteLayoutMode, SiteProject } from '../types/site';
 import { createBlockInstance } from './blockCatalog';
 import { contrastRatio, deriveAlternatePalette, generateAllHarmonies, generateHarmony, normalizeHex } from './colorHarmony';
-import { sanitizeHeaderStyle, sanitizeImageEffect, sanitizeLayoutMode, sanitizeSectionAnimation, clampDuration } from './effectsCatalog';
+import {
+  IMAGE_3D_EFFECTS,
+  IMAGE_SCROLL_EFFECTS,
+  SECTION_ANIMATIONS,
+  sanitizeHeaderStyle,
+  sanitizeImageEffect,
+  sanitizeLayoutMode,
+  sanitizeSectionAnimation,
+  clampDuration,
+} from './effectsCatalog';
 import { generateSeparateHtmlAndCss, generateStandaloneHtml } from './exporter';
-import { EFFECTS_RUNTIME_JS } from './effectsRuntime';
+import { EFFECTS_CSS, EFFECTS_RUNTIME_JS } from './effectsRuntime';
 import { findForbiddenDesignPatterns } from './honesty';
 import { clearAllImages, createBlankProject, applyInspirationEffects, parseForgeFile, serializeProject, ForgeFileError } from './projectIO';
 import { fontFamilyParam, googleFontsHref } from './fonts';
@@ -32,6 +41,13 @@ test('les catalogues rejettent toute valeur inconnue', () => {
   assert.equal(sanitizeSectionAnimation('<script>'), 'none');
   assert.deepEqual(sanitizeImageEffect({ scroll: 'x', scrollIntensity: 900, effect3d: 'magnifier-loupe', effect3dIntensity: -5 }), { scroll: 'none', scrollIntensity: 100, effect3d: 'magnifier-loupe', effect3dIntensity: 0 });
   assert.equal(clampDuration(99999), 3000);
+});
+
+test('les identifiants des catalogues sont bien pris en charge par le runtime partagé', () => {
+  const runtime = `${EFFECTS_CSS}\n${EFFECTS_RUNTIME_JS}`;
+  for (const option of [...IMAGE_3D_EFFECTS, ...IMAGE_SCROLL_EFFECTS, ...SECTION_ANIMATIONS]) {
+    assert.ok(runtime.includes(option.id), `identifiant sans règle runtime : ${option.id}`);
+  }
 });
 
 test('couleurs : saisie libre, harmonies lisibles, version claire / sombre', () => {
@@ -75,6 +91,7 @@ test('export : navigation, animation, effets d’image, mode sombre et crédits'
   assert.ok(html.includes('data-header="floating-glass"'));
   assert.ok(html.includes('data-anim="fade-up"') && html.includes('--sf-anim-ms: 900ms'));
   assert.ok(html.includes('data-fx-scroll="parallax-slow"') && html.includes('data-fx-3d="tilt-3d-hover"'));
+  assert.ok(html.includes('referrerpolicy="no-referrer"') && html.includes('window.__sfImageError'));
   assert.ok(html.includes('data-sf-theme-toggle'));
   assert.ok(html.includes(':root[data-theme="dark"]'), 'version sombre calculée');
   assert.ok(html.includes('Crédits photos') && html.includes('Awa (CC BY 4.0)'));
@@ -200,4 +217,44 @@ test('moteur d’effets : sans IntersectionObserver ou avec mouvement réduit, t
   const { w, doc } = await runtime(html);
   w.__sfFx(doc, {});
   assert.ok(doc.querySelector('[data-anim].is-in'), 'section visible même sans IntersectionObserver');
+});
+
+test('moteur d’effets : les animations se rejouent à chaque sortie et retour dans le viewport', () => {
+  const classes = new Set<string>();
+  const section = {
+    classList: {
+      add: (value: string) => classes.add(value),
+      remove: (value: string) => classes.delete(value),
+      contains: (value: string) => classes.has(value),
+    },
+    getAttribute: (name: string) => name === 'data-anim' ? 'fade-up' : null,
+  };
+  const host = { classList: { add() {}, remove() {} } };
+  const doc = {
+    nodeType: 9,
+    documentElement: host,
+    querySelectorAll: (selector: string) => selector === '[data-anim]' ? [section] : [],
+    querySelector: () => null,
+  };
+  let callback: ((entries: Array<{ target: typeof section; isIntersecting: boolean }>) => void) | undefined;
+  const win = {
+    matchMedia: () => ({ matches: false }),
+    IntersectionObserver: class {
+      constructor(onChange: typeof callback) {
+        callback = onChange;
+      }
+      observe() {}
+      disconnect() {}
+    },
+  };
+  new Function('window', 'document', 'IntersectionObserver', EFFECTS_RUNTIME_JS)(win, doc, win.IntersectionObserver);
+  const runtimeWindow = win as typeof win & { __sfFx?: (root: typeof doc, opts: object) => () => void };
+  assert.ok(runtimeWindow.__sfFx);
+  runtimeWindow.__sfFx!(doc, {});
+  callback!([{ target: section, isIntersecting: true }]);
+  assert.ok(classes.has('is-in'));
+  callback!([{ target: section, isIntersecting: false }]);
+  assert.ok(!section.classList.contains('is-in'), 'l’état initial revient quand la section sort');
+  callback!([{ target: section, isIntersecting: true }]);
+  assert.ok(section.classList.contains('is-in'), 'l’animation peut se rejouer au retour');
 });

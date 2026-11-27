@@ -66,6 +66,7 @@ export function WizardFlow({ mode, onCancel, onComplete }: WizardFlowProps) {
   const [partnerLogos, setPartnerLogos] = useState<string>('');
   const [uploadedPhotos, setUploadedPhotos] = useState<UploadedFactPhoto[]>([]);
   const [personMediaConsent, setPersonMediaConsent] = useState<boolean>(false);
+  const [aiDataAcknowledged, setAiDataAcknowledged] = useState(false);
 
   const [formError, setFormError] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
@@ -169,6 +170,10 @@ export function WizardFlow({ mode, onCancel, onComplete }: WizardFlowProps) {
   };
 
   const runGeneration = async () => {
+    if (!aiDataAcknowledged) {
+      setFormError('Confirmez avoir pris connaissance du traitement des données par le fournisseur IA avant de générer.');
+      return;
+    }
     if (requiresPersonConsent && !personMediaConsent) {
       setFormError(
         'Veuillez confirmer avoir obtenu l’accord des personnes pour publier leur avis ou leur photo.',
@@ -821,6 +826,20 @@ export function WizardFlow({ mode, onCancel, onComplete }: WizardFlowProps) {
                     Pour calibrer vos appels à l’action concrets et la hiérarchie de votre page.
                   </p>
                 </div>
+                <label className="flex items-start gap-2.5 rounded-sm border border-[#E5DEC9] bg-white p-3 text-xs leading-relaxed text-[#57534E]">
+                  <input
+                    type="checkbox"
+                    checked={aiDataAcknowledged}
+                    onChange={(event) => {
+                      setAiDataAcknowledged(event.target.checked);
+                      setFormError('');
+                    }}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-[#9A3412]"
+                  />
+                  <span>
+                    Je comprends que les informations et fichiers fournis pour cette génération seront transmis au fournisseur IA configuré afin de produire le site. Je n’envoie que des données que je suis autorisé à partager.
+                  </span>
+                </label>
 
                 <div className="space-y-4">
                   <div>
@@ -898,7 +917,8 @@ export function WizardFlow({ mode, onCancel, onComplete }: WizardFlowProps) {
                 <button
                   type="button"
                   onClick={runGeneration}
-                  className="px-5 py-2.5 rounded-sm bg-[#9A3412] hover:bg-[#7C2D12] text-white text-sm font-semibold flex items-center gap-2 cursor-pointer"
+                  disabled={!aiDataAcknowledged || isGenerating}
+                  className="px-5 py-2.5 rounded-sm bg-[#9A3412] hover:bg-[#7C2D12] text-white text-sm font-semibold flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <span>Générer mon site original</span>
                   <ArrowRight className="w-4 h-4" aria-hidden="true" />
